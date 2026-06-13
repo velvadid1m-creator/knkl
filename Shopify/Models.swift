@@ -206,6 +206,11 @@ enum ShopifySampleData {
     }
 
     /// Stable order data for dashboard rows — same counter always shows the same order.
+    static func customerName(counter: Int) -> String {
+        let names = ["", "Guest checkout", "James Mitchell", "Sarah Khan", "Alex Turner", "Emma Walsh"]
+        return names[abs(counter) % names.count]
+    }
+
     static func seededOrder(counter: Int) -> SampleOrder {
         let count = [1, 2, 2, 1, 2, 1, 2, 3, 1, 2][abs(counter) % 10]
         var totalPence = 0
@@ -221,7 +226,7 @@ enum ShopifySampleData {
 
 // MARK: - Dashboard data
 
-struct DashboardOrder: Identifiable {
+struct DashboardOrder: Identifiable, Hashable {
     let id: Int
     let orderNumber: String
     let total: String
@@ -229,12 +234,21 @@ struct DashboardOrder: Identifiable {
     let itemsPhrase: String
     let source: String
     let store: String
+    let customer: String
     let placedAt: Date
     let status: String
     let fulfillment: String
 
     var subtitleLine: String {
         "\(total), \(itemsPhrase) from \(source) •"
+    }
+
+    var notificationTitle: String {
+        "Order #\(orderNumber)"
+    }
+
+    var notificationBody: String {
+        "\(subtitleLine)\n\(store)"
     }
 }
 
@@ -305,6 +319,7 @@ enum DashboardData {
             itemsPhrase: sample.itemsPhrase,
             source: "Online Store",
             store: ShopifySampleData.defaultStore,
+            customer: ShopifySampleData.customerName(counter: counter),
             placedAt: placedAt(counter: counter),
             status: "Paid",
             fulfillment: counter % 5 == 0 ? "Unfulfilled" : "Fulfilled"
@@ -330,6 +345,31 @@ enum DashboardData {
         let formatter = DateFormatter()
         formatter.timeStyle = .short
         return formatter.string(from: date)
+    }
+
+    /// Shopify orders list timestamp: "Today at 2:41 PM"
+    static func orderListTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        if Calendar.current.isDateInToday(date) {
+            return "Today at \(formatter.string(from: date))"
+        }
+        if Calendar.current.isDateInYesterday(date) {
+            return "Yesterday at \(formatter.string(from: date))"
+        }
+        formatter.dateStyle = .medium
+        return formatter.string(from: date)
+    }
+
+    static func notificationTime(_ date: Date) -> String {
+        let seconds = Int(Date().timeIntervalSince(date))
+        if seconds < 3600 { return "\(max(1, seconds / 60))m" }
+        if Calendar.current.isDateInToday(date) {
+            let formatter = DateFormatter()
+            formatter.timeStyle = .short
+            return formatter.string(from: date)
+        }
+        return relativeTime(date)
     }
 
     static func isRecent(_ date: Date) -> Bool {
@@ -575,7 +615,26 @@ enum NotificationHistoryStore {
     }
 }
 
-extension DashboardOrder: Codable {}
+extension DashboardOrder: Codable {
+    enum CodingKeys: String, CodingKey {
+        case id, orderNumber, total, totalPence, itemsPhrase, source, store, customer, placedAt, status, fulfillment
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int.self, forKey: .id)
+        orderNumber = try container.decode(String.self, forKey: .orderNumber)
+        total = try container.decode(String.self, forKey: .total)
+        totalPence = try container.decode(Int.self, forKey: .totalPence)
+        itemsPhrase = try container.decode(String.self, forKey: .itemsPhrase)
+        source = try container.decode(String.self, forKey: .source)
+        store = try container.decode(String.self, forKey: .store)
+        customer = try container.decodeIfPresent(String.self, forKey: .customer) ?? ""
+        placedAt = try container.decode(Date.self, forKey: .placedAt)
+        status = try container.decode(String.self, forKey: .status)
+        fulfillment = try container.decode(String.self, forKey: .fulfillment)
+    }
+}
 
 // MARK: - Sound choices (filenames must match files bundled in the app)
 

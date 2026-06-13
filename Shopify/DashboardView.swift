@@ -33,6 +33,7 @@ struct DashboardShell: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var store: Store
     @State private var tab = 0
+    @State private var showNotifications = false
 
     private var orderCounter: Int {
         guard let reminder = store.reminders.first else { return 9 }
@@ -41,7 +42,7 @@ struct DashboardShell: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            ShopifyHomeView(orderCounter: orderCounter)
+            ShopifyHomeView(orderCounter: orderCounter, showNotifications: $showNotifications)
                 .tabItem { Label("Home", systemImage: tab == 0 ? "house.fill" : "house") }
                 .tag(0)
 
@@ -63,28 +64,59 @@ struct DashboardShell: View {
             guard phase == .active else { return }
             Task { await NotificationManager.shared.reschedule(store.reminders) }
         }
+        .sheet(isPresented: $showNotifications) {
+            ShopifyNotificationsView(orderCounter: orderCounter)
+        }
     }
 }
 
 // MARK: - Shared components
+
+/// Shopify shopping-bag mark (drawn — matches merchant app icon shape).
+private struct ShopifyBagShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let w = rect.width
+        let h = rect.height
+        var path = Path()
+        path.move(to: CGPoint(x: w * 0.24, y: h * 0.36))
+        path.addQuadCurve(
+            to: CGPoint(x: w * 0.76, y: h * 0.36),
+            control: CGPoint(x: w * 0.5, y: h * 0.08)
+        )
+        path.addLine(to: CGPoint(x: w * 0.86, y: h * 0.88))
+        path.addQuadCurve(
+            to: CGPoint(x: w * 0.14, y: h * 0.88),
+            control: CGPoint(x: w * 0.5, y: h * 1.02)
+        )
+        path.closeSubpath()
+        return path
+    }
+}
 
 private struct ShopifyBagMark: View {
     var size: CGFloat = 28
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+            RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
                 .fill(ShopifyTheme.brandDark)
                 .frame(width: size, height: size)
-            Image(systemName: "bag.fill")
-                .font(.system(size: size * 0.46, weight: .semibold))
-                .foregroundStyle(.white)
+            ShopifyBagShape()
+                .fill(.white)
+                .frame(width: size * 0.52, height: size * 0.52)
         }
+    }
+}
+
+private extension View {
+    func shopifyCardShadow() -> some View {
+        shadow(color: .black.opacity(0.06), radius: 2, x: 0, y: 1)
     }
 }
 
 private struct ShopifyStoreBar: View {
     var showsSearch = false
+    @Binding var showNotifications: Bool
 
     var body: some View {
         HStack(spacing: 12) {
@@ -109,15 +141,18 @@ private struct ShopifyStoreBar: View {
             Image(systemName: "message")
                 .font(.body.weight(.medium))
                 .foregroundStyle(ShopifyTheme.text)
-            ZStack(alignment: .topTrailing) {
-                Image(systemName: "bell")
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(ShopifyTheme.text)
-                Circle()
-                    .fill(ShopifyTheme.critical)
-                    .frame(width: 8, height: 8)
-                    .offset(x: 2, y: -2)
+            Button { showNotifications = true } label: {
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: "bell")
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(ShopifyTheme.text)
+                    Circle()
+                        .fill(ShopifyTheme.critical)
+                        .frame(width: 8, height: 8)
+                        .offset(x: 2, y: -2)
+                }
             }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -258,10 +293,7 @@ private struct MetricTile: View {
         .frame(width: 132, alignment: .leading)
         .padding(14)
         .background(ShopifyTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(ShopifyTheme.border, lineWidth: 1)
-        )
+        .shopifyCardShadow()
     }
 }
 
@@ -271,65 +303,72 @@ private struct ShopifyCard<Content: View>: View {
     var body: some View {
         content
             .padding(16)
-            .background(ShopifyTheme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(ShopifyTheme.border, lineWidth: 1)
-            )
+            .background(ShopifyTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .shopifyCardShadow()
     }
 }
 
-/// Home recent-order row — matches push notification text exactly.
-private struct ShopifyNotificationOrderCell: View {
+/// Push notification replica row (exact lock-screen format).
+private struct ShopifyNotificationRow: View {
     let order: DashboardOrder
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            ShopifyBagMark(size: 30)
-            VStack(alignment: .leading, spacing: 3) {
+            ShopifyBagMark(size: 38)
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("Order #\(order.orderNumber)")
+                    Text(order.notificationTitle)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(ShopifyTheme.text)
                     Spacer(minLength: 8)
-                    Text(DashboardData.relativeTime(order.placedAt))
+                    Text(DashboardData.notificationTime(order.placedAt))
                         .font(.caption)
                         .foregroundStyle(ShopifyTheme.subdued)
                 }
                 Text(order.subtitleLine)
                     .font(.subheadline)
                     .foregroundStyle(ShopifyTheme.subdued)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(order.store)
                     .font(.subheadline)
                     .foregroundStyle(ShopifyTheme.text)
             }
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
     }
 }
 
-/// Orders tab row — matches real Shopify merchant app list.
+/// Home + orders list — real Shopify merchant app row.
 private struct ShopifyOrderListCell: View {
     let order: DashboardOrder
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Order #\(order.orderNumber)")
-                    .font(.subheadline.weight(.semibold))
+        HStack(alignment: .top, spacing: 0) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("#\(order.orderNumber)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(ShopifyTheme.text)
+                    Spacer(minLength: 8)
+                    Text(DashboardData.orderListTime(order.placedAt))
+                        .font(.caption)
+                        .foregroundStyle(ShopifyTheme.subdued)
+                }
+                if !order.customer.isEmpty {
+                    Text(order.customer)
+                        .font(.subheadline)
+                        .foregroundStyle(ShopifyTheme.subdued)
+                }
+                Text(order.total)
+                    .font(.subheadline.weight(.medium))
                     .foregroundStyle(ShopifyTheme.text)
-                Spacer(minLength: 8)
-                Text(DashboardData.relativeTime(order.placedAt))
-                    .font(.caption)
-                    .foregroundStyle(ShopifyTheme.subdued)
-            }
-            Text("\(order.total) · \(order.itemsPhrase)")
-                .font(.subheadline)
-                .foregroundStyle(ShopifyTheme.subdued)
-            HStack(spacing: 6) {
-                FulfillmentBadge(text: order.status, tone: .paid)
-                if order.fulfillment == "Unfulfilled" {
-                    FulfillmentBadge(text: "Unfulfilled", tone: .warning)
+                HStack(spacing: 6) {
+                    FulfillmentBadge(text: order.status, tone: .paid)
+                    if order.fulfillment == "Unfulfilled" {
+                        FulfillmentBadge(text: "Unfulfilled", tone: .warning)
+                    } else {
+                        FulfillmentBadge(text: "Fulfilled", tone: .neutral)
+                    }
                 }
             }
         }
@@ -389,6 +428,7 @@ private struct ShopifySearchBar: View {
 
 struct ShopifyHomeView: View {
     let orderCounter: Int
+    @Binding var showNotifications: Bool
 
     private var orders: [DashboardOrder] {
         DashboardData.recentOrders(counter: orderCounter, limit: 12)
@@ -414,7 +454,7 @@ struct ShopifyHomeView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    ShopifyStoreBar()
+                    ShopifyStoreBar(showNotifications: $showNotifications)
 
                     VStack(alignment: .leading, spacing: 16) {
                         ShopifyCard {
@@ -456,7 +496,7 @@ struct ShopifyHomeView: View {
                                     sparkline: DashboardData.sparkline(seed: 3, counter: orderCounter)
                                 )
                                 MetricTile(
-                                    title: "Average order",
+                                    title: "Average order value",
                                     value: stats.averageOrder,
                                     delta: "↑ \(3 + orderCounter % 4)%",
                                     sparkline: DashboardData.sparkline(seed: 4, counter: orderCounter)
@@ -516,17 +556,22 @@ struct ShopifyHomeView: View {
                                 Text("Recent orders")
                                     .font(.headline)
                                 Spacer()
-                                Text("View all")
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundStyle(ShopifyTheme.brand)
+                                Button { showNotifications = true } label: {
+                                    Text("View all")
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(ShopifyTheme.brand)
+                                }
                             }
 
                             ShopifyCard {
                                 VStack(spacing: 0) {
                                     ForEach(Array(orders.prefix(5))) { order in
-                                        ShopifyNotificationOrderCell(order: order)
+                                        NavigationLink(value: order) {
+                                            ShopifyOrderListCell(order: order)
+                                        }
+                                        .buttonStyle(.plain)
                                         if order.id != orders.prefix(5).last?.id {
-                                            Divider().padding(.leading, 42)
+                                            Divider()
                                         }
                                     }
                                 }
@@ -540,6 +585,9 @@ struct ShopifyHomeView: View {
             }
             .background(ShopifyTheme.surface)
             .navigationBarHidden(true)
+            .navigationDestination(for: DashboardOrder.self) { order in
+                ShopifyOrderDetailView(order: order)
+            }
         }
     }
 }
@@ -549,7 +597,6 @@ struct ShopifyHomeView: View {
 struct ShopifyOrdersView: View {
     let orderCounter: Int
     @State private var filter = "Open"
-    @State private var selectedOrder: DashboardOrder?
 
     private let filters = ["Open", "Archived", "All"]
 
@@ -612,12 +659,9 @@ struct ShopifyOrdersView: View {
 
                 List {
                     ForEach(orders) { order in
-                        Button {
-                            selectedOrder = order
-                        } label: {
+                        NavigationLink(value: order) {
                             ShopifyOrderListCell(order: order)
                         }
-                        .buttonStyle(.plain)
                         .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
                         .listRowSeparator(.visible)
                         .listRowBackground(ShopifyTheme.card)
@@ -627,60 +671,41 @@ struct ShopifyOrdersView: View {
                 .scrollContentBackground(.hidden)
             }
             .background(ShopifyTheme.surface)
-            .sheet(item: $selectedOrder) { order in
-                ShopifyOrderDetailSheet(order: order)
+            .navigationDestination(for: DashboardOrder.self) { order in
+                ShopifyOrderDetailView(order: order)
             }
         }
     }
 }
 
-// MARK: - Order detail
+// MARK: - Notifications (exact push replica)
 
-private struct ShopifyOrderDetailSheet: View {
+struct ShopifyNotificationsView: View {
     @Environment(\.dismiss) private var dismiss
-    let order: DashboardOrder
+    let orderCounter: Int
+
+    private var orders: [DashboardOrder] {
+        DashboardData.recentOrders(counter: orderCounter, limit: 30)
+    }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Order #\(order.orderNumber)")
-                            .font(.title2.bold())
-                        Text(DashboardData.relativeTime(order.placedAt))
-                            .font(.subheadline)
-                            .foregroundStyle(ShopifyTheme.subdued)
+            List {
+                Section {
+                    ForEach(orders) { order in
+                        ShopifyNotificationRow(order: order)
+                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     }
-
-                    HStack(spacing: 8) {
-                        FulfillmentBadge(text: order.status, tone: .paid)
-                        FulfillmentBadge(
-                            text: order.fulfillment,
-                            tone: order.fulfillment == "Unfulfilled" ? .warning : .neutral
-                        )
-                    }
-
-                    detailCard(title: "Order") {
-                        Text(order.subtitleLine)
-                        Text(order.store)
-                            .font(.headline)
-                            .padding(.top, 4)
-                    }
-
-                    detailCard(title: "Payment") {
-                        row("Subtotal", order.total)
-                        row("Total", order.total, bold: true)
-                        row("Status", order.status)
-                    }
-
-                    detailCard(title: "Channel") {
-                        row("Source", order.source)
-                        row("Store", order.store)
-                    }
+                } header: {
+                    Text("Today")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(ShopifyTheme.subdued)
+                        .textCase(nil)
                 }
-                .padding(16)
             }
-            .background(ShopifyTheme.surface)
+            .listStyle(.plain)
+            .navigationTitle("Notifications")
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }
@@ -688,22 +713,95 @@ private struct ShopifyOrderDetailSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+    }
+}
+
+// MARK: - Order detail (full-screen replica)
+
+struct ShopifyOrderDetailView: View {
+    let order: DashboardOrder
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("#\(order.orderNumber)")
+                        .font(.largeTitle.bold())
+                    Text(DashboardData.orderListTime(order.placedAt))
+                        .font(.subheadline)
+                        .foregroundStyle(ShopifyTheme.subdued)
+                    HStack(spacing: 8) {
+                        FulfillmentBadge(text: order.status, tone: .paid)
+                        FulfillmentBadge(
+                            text: order.fulfillment,
+                            tone: order.fulfillment == "Unfulfilled" ? .warning : .neutral
+                        )
+                    }
+                }
+                .padding(.horizontal, 16)
+
+                detailCard(title: "Timeline") {
+                    timelineRow("Order placed", DashboardData.orderListTime(order.placedAt), done: true)
+                    timelineRow("Payment received", order.status, done: true)
+                    timelineRow("Fulfillment", order.fulfillment, done: order.fulfillment == "Fulfilled")
+                }
+
+                detailCard(title: "Customer") {
+                    if order.customer.isEmpty {
+                        Text("No customer")
+                            .foregroundStyle(ShopifyTheme.subdued)
+                    } else {
+                        Text(order.customer)
+                            .font(.headline)
+                    }
+                    HStack(spacing: 16) {
+                        Image(systemName: "envelope")
+                        Image(systemName: "phone")
+                        Image(systemName: "message")
+                    }
+                    .font(.body)
+                    .foregroundStyle(ShopifyTheme.brand)
+                    .padding(.top, 4)
+                }
+
+                detailCard(title: "Payment") {
+                    row("Subtotal", order.total)
+                    row("Shipping", "£0.00")
+                    row("Taxes", "£0.00")
+                    Divider().padding(.vertical, 4)
+                    row("Total", order.total, bold: true)
+                    row("Paid", order.total, bold: false)
+                }
+
+                detailCard(title: "Fulfillment") {
+                    row("Status", order.fulfillment)
+                    row("Channel", order.source)
+                    row("Items", order.itemsPhrase)
+                }
+
+                detailCard(title: "Notes") {
+                    Text("No notes from customer")
+                        .font(.subheadline)
+                        .foregroundStyle(ShopifyTheme.subdued)
+                }
+            }
+            .padding(.vertical, 16)
+        }
+        .background(ShopifyTheme.surface)
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private func detailCard(title: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             Text(title)
                 .font(.headline)
             content()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
+        .padding(16)
         .background(ShopifyTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(ShopifyTheme.border, lineWidth: 1)
-        )
+        .shopifyCardShadow()
+        .padding(.horizontal, 16)
     }
 
     private func row(_ label: String, _ value: String, bold: Bool = false) -> some View {
@@ -715,6 +813,22 @@ private struct ShopifyOrderDetailSheet: View {
                 .fontWeight(bold ? .semibold : .regular)
         }
         .font(.subheadline)
+    }
+
+    private func timelineRow(_ title: String, _ detail: String, done: Bool) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Circle()
+                .fill(done ? ShopifyTheme.brand : ShopifyTheme.border)
+                .frame(width: 10, height: 10)
+                .padding(.top, 4)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.medium))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(ShopifyTheme.subdued)
+            }
+        }
     }
 }
 
