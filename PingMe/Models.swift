@@ -73,7 +73,7 @@ struct Reminder: Identifiable, Codable, Equatable {
     /// UK Shopify format — Order # title, price + items + source, store on next line.
     static let shopifyOrder = Reminder(
         title: "Order #{order}",
-        body: "{total}, {items_phrase} from {source} ·\n{store}",
+        body: "{total}, {items_phrase} from {source} •\n{store}",
         soundName: "ding.wav",
         every: 5,
         unit: .minutes,
@@ -83,21 +83,22 @@ struct Reminder: Identifiable, Codable, Equatable {
 
 // MARK: - Template variables
 
+struct SampleOrder {
+    let itemCount: Int
+    let totalPence: Int
+
+    var itemsPhrase: String {
+        itemCount == 1 ? "1 item" : "\(itemCount) items"
+    }
+
+    var totalGBP: String {
+        ShopifySampleData.formatGBP(totalPence)
+    }
+}
+
 enum ShopifySampleData {
     static let defaultStore = "Novus Kits"
     private static let orderNumberBase = 1134
-
-    static let sources = [
-        "Online Store", "Online Store", "Online Store", "Online Store",
-        "Online Store", "Facebook & Instagram"
-    ]
-
-    /// Typical Novus Kits order totals — mostly £38–£56.
-    private static let realisticTotalsPence: [Int] = [
-        3849, 3899, 3949, 3999, 4049, 4099, 4149, 4199, 4249, 4299, 4349, 4399,
-        4449, 4499, 4500, 4549, 4599, 4609, 4649, 4664, 4699, 4749, 4799, 4849,
-        4899, 4949, 4999, 5049, 5099, 5199, 5249, 5299, 5399, 5449, 5499, 5599
-    ]
 
     static func orderNumber(counter: Int) -> String {
         "\(orderNumberBase + counter)"
@@ -108,24 +109,36 @@ enum ShopifySampleData {
     }
 
     static func randomSource() -> String {
-        sources.randomElement() ?? "Online Store"
+        "Online Store"
     }
 
-    /// Real orders: mostly 1–2 items, no product names shown.
-    static func randomItemCountPhrase() -> String {
-        let count = Int.random(in: 1...100) <= 48 ? 1 : 2
-        return count == 1 ? "1 item" : "2 items"
+    /// Weighted 1–4 items — mostly 1–2, sometimes more.
+    static func randomItemCount() -> Int {
+        switch Int.random(in: 1...100) {
+        case 1...38: return 1
+        case 39...72: return 2
+        case 73...88: return 3
+        default: return 4
+        }
     }
 
-    static func randomTotalGBP(minPounds: Int = 38, maxPounds: Int = 56) -> String {
-        let minPence = minPounds * 100
-        let maxPence = maxPounds * 100
-        let pool = realisticTotalsPence.filter { $0 >= minPence && $0 <= maxPence }
-        let pence = pool.randomElement() ?? 4500
-        return formatGBP(pence)
+    /// One coherent order: item count + total derived from £30–£80 per item.
+    static func randomOrder(perItemMinPounds: Int = 30, perItemMaxPounds: Int = 80) -> SampleOrder {
+        let count = randomItemCount()
+        var totalPence = 0
+        for _ in 0..<count {
+            totalPence += randomItemPricePence(minPounds: perItemMinPounds, maxPounds: perItemMaxPounds)
+        }
+        return SampleOrder(itemCount: count, totalPence: totalPence)
     }
 
-    private static func formatGBP(_ pence: Int) -> String {
+    private static func randomItemPricePence(minPounds: Int, maxPounds: Int) -> Int {
+        let pounds = Int.random(in: minPounds...maxPounds)
+        let cents = [0, 0, 0, 9, 49, 53, 64, 99].randomElement() ?? 0
+        return pounds * 100 + cents
+    }
+
+    static func formatGBP(_ pence: Int) -> String {
         String(format: "£%d.%02d", pence / 100, pence % 100)
     }
 }
@@ -134,8 +147,8 @@ enum NotificationTemplate {
     static let variableHelp = """
     UK Shopify format:
     {order} — Order #1143, #1144…
-    {total} — £45.00, £46.64…
-    {items_phrase} — 1 item or 2 items
+    {total} — £45.00, £92.64… (based on items × £30–£80)
+    {items_phrase} — 1 item, 2 items, 3 items…
     {source} — Online Store
     {store} — Novus Kits (on its own line)
     """
@@ -161,6 +174,12 @@ enum NotificationTemplate {
     static func render(_ template: String, counter: Int, fireDate: Date) -> String {
         guard !template.isEmpty else { return template }
 
+        let needsOrder = template.contains("{total")
+            || template.contains("{amount")
+            || template.contains("{items_phrase}")
+            || template.contains("{item_count}")
+        let sampleOrder = needsOrder ? ShopifySampleData.randomOrder() : nil
+
         var result = template
         result = result.replacingOccurrences(of: "{counter}", with: "\(counter)")
         result = result.replacingOccurrences(of: "{count}", with: "\(counter)")
@@ -175,12 +194,13 @@ enum NotificationTemplate {
         result = replaceToken("{store}", in: result) { _ in
             ShopifySampleData.randomStore()
         }
-        result = replaceToken("{items_phrase}", in: result) { _ in
-            ShopifySampleData.randomItemCountPhrase()
-        }
-        result = replaceToken("{item_count}", in: result) { _ in
-            let count = Int.random(in: 1...4)
-            return "\(count)"
+        if let sampleOrder {
+            result = replaceToken("{items_phrase}", in: result) { _ in
+                sampleOrder.itemsPhrase
+            }
+            result = replaceToken("{item_count}", in: result) { _ in
+                "\(sampleOrder.itemCount)"
+            }
         }
         result = replaceToken("{source}", in: result) { _ in
             ShopifySampleData.randomSource()
@@ -194,7 +214,7 @@ enum NotificationTemplate {
         dateFormatter.dateStyle = .medium
         result = result.replacingOccurrences(of: "{date}", with: dateFormatter.string(from: fireDate))
 
-        result = replaceTotalTokens(in: result)
+        result = replaceTotalTokens(in: result, sampleOrder: sampleOrder)
         result = replaceRandomTokens(in: result)
         return result
     }
@@ -211,7 +231,7 @@ enum NotificationTemplate {
         return result
     }
 
-    private static func replaceTotalTokens(in text: String) -> String {
+    private static func replaceTotalTokens(in text: String, sampleOrder: SampleOrder?) -> String {
         let pattern = #"\{(?:total|amount)(?::(\d+)-(\d+))?\}"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
 
@@ -221,13 +241,21 @@ enum NotificationTemplate {
             guard let range = Range(match.range, in: text) else { continue }
             let low = match.range(at: 1).location != NSNotFound
                 ? (text as NSString).substring(with: match.range(at: 1))
-                : "38"
+                : "30"
             let high = match.range(at: 2).location != NSNotFound
                 ? (text as NSString).substring(with: match.range(at: 2))
-                : "56"
-            let minValue = Int(low) ?? 38
-            let maxValue = max(minValue, Int(high) ?? 56)
-            let value = ShopifySampleData.randomTotalGBP(minPounds: minValue, maxPounds: maxValue)
+                : "80"
+            let minValue = Int(low) ?? 30
+            let maxValue = max(minValue, Int(high) ?? 80)
+            let value: String
+            if let sampleOrder {
+                value = sampleOrder.totalGBP
+            } else {
+                value = ShopifySampleData.randomOrder(
+                    perItemMinPounds: minValue,
+                    perItemMaxPounds: maxValue
+                ).totalGBP
+            }
             result.replaceSubrange(range, with: value)
         }
         return result
@@ -378,9 +406,14 @@ final class Store: ObservableObject {
         var changed = false
         for index in reminders.indices {
             let old = reminders[index]
+            let isShopifyStyle = old.title.contains("{order")
+                || old.body.contains("{store}")
+                || old.body.contains("{items_phrase}")
             let isOldFormat = old.body.contains("has a new order for")
                 || (old.title.isEmpty && old.body.contains("totaling"))
-            guard isOldFormat else { continue }
+                || old.body.contains("Facebook")
+                || old.body.contains("·")
+            guard isShopifyStyle && isOldFormat else { continue }
 
             var updated = Reminder.shopifyOrder
             updated.id = old.id
