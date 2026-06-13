@@ -279,7 +279,11 @@ enum DashboardData {
     }
 
     static func todayStats(counter: Int) -> DashboardStats {
-        let orders = recentOrders(counter: counter).filter { Calendar.current.isDateInToday($0.placedAt) }
+        let all = recentOrders(counter: counter, limit: 12)
+        var orders = all.filter { Calendar.current.isDateInToday($0.placedAt) }
+        if orders.isEmpty {
+            orders = Array(all.prefix(6))
+        }
         let sales = orders.reduce(0) { $0 + $1.totalPence }
         let sessions = max(orders.count * 18 + 42, 64)
         let conversion = orders.isEmpty ? 2.4 : min(6.8, Double(orders.count) / Double(sessions) * 100 + 1.8)
@@ -308,8 +312,8 @@ enum DashboardData {
     }
 
     private static func placedAt(counter: Int) -> Date {
-        let offsets = [8, 22, 41, 67, 128, 245, 380, 520, 890, 1440, 2880, 4320]
-        let minutes = offsets[abs(counter) % offsets.count] + (abs(counter) % 17)
+        let offsets = [3, 8, 14, 22, 35, 48, 67, 95, 128, 180, 360, 720]
+        let minutes = offsets[abs(counter) % offsets.count]
         return Date().addingTimeInterval(-Double(minutes * 60))
     }
 
@@ -347,6 +351,13 @@ enum DashboardData {
     static func salesChangeLabel(counter: Int) -> String {
         let pct = 8 + (counter % 14)
         return "↑ \(pct)% from yesterday"
+    }
+
+    static func sparkline(seed: Int, counter: Int) -> [CGFloat] {
+        (0..<10).map { index in
+            let value = abs((seed &* 13 &+ counter &* 7 &+ index &* 11) % 100)
+            return CGFloat(0.15 + Double(value) / 100.0)
+        }
     }
 }
 
