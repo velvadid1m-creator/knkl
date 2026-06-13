@@ -32,7 +32,7 @@ enum RepeatUnit: String, Codable, CaseIterable, Identifiable {
 
 // MARK: - Reminder model
 
-struct Reminder: Identifiable, Codable, Equatable {
+struct Reminder: Identifiable, Equatable {
     var id: UUID = UUID()
     var title: String = ""
     var body: String = ""
@@ -47,9 +47,9 @@ struct Reminder: Identifiable, Codable, Equatable {
 
     /// Fast cluster of alerts, separated by longer gaps.
     var burstEnabled: Bool = false
-    /// Seconds between dings inside a burst — 0 = all fire together.
-    var burstMinSeconds: Double = 0
-    var burstMaxSeconds: Double = 0
+    /// Milliseconds between dings inside a burst — 0 = as fast as iOS allows.
+    var burstMinMilliseconds: Int = 0
+    var burstMaxMilliseconds: Int = 0
     var burstCount: Int = 4
     var burstEvery: Int = 20
     var burstEveryUnit: RepeatUnit = .minutes
@@ -68,22 +68,34 @@ struct Reminder: Identifiable, Codable, Equatable {
         return (minValue, maxValue)
     }
 
-    var normalizedBurstSeconds: (min: Double, max: Double) {
-        let minValue = max(0, min(burstMinSeconds, burstMaxSeconds))
-        let maxValue = max(minValue, max(burstMinSeconds, burstMaxSeconds))
+    var normalizedBurstMilliseconds: (min: Int, max: Int) {
+        let minValue = max(0, min(burstMinMilliseconds, burstMaxMilliseconds))
+        let maxValue = max(minValue, max(burstMinMilliseconds, burstMaxMilliseconds))
         return (minValue, maxValue)
     }
 
+    static func formatBurstGapMilliseconds(_ milliseconds: Int) -> String {
+        if milliseconds <= 0 { return "instant" }
+        if milliseconds < 1000 { return "\(milliseconds)ms" }
+        if milliseconds % 1000 == 0 { return "\(milliseconds / 1000)s" }
+        return String(format: "%.2fs", Double(milliseconds) / 1000)
+    }
+
+    static func formatBurstGapRangeMilliseconds(min: Int, max: Int) -> String {
+        if min <= 0 && max <= 0 { return "instant" }
+        if min == max { return formatBurstGapMilliseconds(min) }
+        return "\(formatBurstGapMilliseconds(min))–\(formatBurstGapMilliseconds(max))"
+    }
+
     static func formatBurstGap(_ seconds: Double) -> String {
-        if seconds <= 0 { return "instant" }
-        if seconds < 1 { return String(format: "%.1fs", seconds) }
-        return String(format: "%.0fs", seconds)
+        formatBurstGapMilliseconds(Int((seconds * 1000).rounded()))
     }
 
     static func formatBurstGapRange(min: Double, max: Double) -> String {
-        if min <= 0 && max <= 0 { return "instant" }
-        if min == max { return formatBurstGap(min) }
-        return "\(formatBurstGap(min))–\(formatBurstGap(max))"
+        formatBurstGapRangeMilliseconds(
+            min: Int((min * 1000).rounded()),
+            max: Int((max * 1000).rounded())
+        )
     }
 
     static func formatDuration(_ seconds: Int) -> String {
@@ -102,10 +114,10 @@ struct Reminder: Identifiable, Codable, Equatable {
     var cadenceText: String {
         let (spacingLo, spacingHi) = normalizedSpacingSeconds
         if burstEnabled {
-            let (burstLo, burstHi) = normalizedBurstSeconds
+            let (burstLo, burstHi) = normalizedBurstMilliseconds
             let burstUnit = burstEveryUnit.label
             let burstWord = burstEvery == 1 ? String(burstUnit.dropLast()) : burstUnit
-            let burstGap = Reminder.formatBurstGapRange(min: burstLo, max: burstHi)
+            let burstGap = Reminder.formatBurstGapRangeMilliseconds(min: burstLo, max: burstHi)
             return "Varied \(Reminder.formatDuration(spacingLo))–\(Reminder.formatDuration(spacingHi)) · burst \(burstCount)× (\(burstGap)) every ~\(burstEvery) \(burstWord)"
         }
         if usesDynamicText || spacingLo != spacingHi {
@@ -136,12 +148,72 @@ struct Reminder: Identifiable, Codable, Equatable {
         spacingMinSeconds: 120,
         spacingMaxSeconds: 10800,
         burstEnabled: true,
-        burstMinSeconds: 0,
-        burstMaxSeconds: 0,
+        burstMinMilliseconds: 0,
+        burstMaxMilliseconds: 0,
         burstCount: 4,
         burstEvery: 20,
         burstEveryUnit: .minutes
     )
+}
+
+extension Reminder: Codable {
+    enum CodingKeys: String, CodingKey {
+        case id, title, body, soundName, every, unit, isOn
+        case spacingMinSeconds, spacingMaxSeconds
+        case burstEnabled, burstMinMilliseconds, burstMaxMilliseconds
+        case burstCount, burstEvery, burstEveryUnit
+        case burstMinSeconds, burstMaxSeconds
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
+        body = try container.decodeIfPresent(String.self, forKey: .body) ?? ""
+        soundName = try container.decodeIfPresent(String.self, forKey: .soundName) ?? "chime.wav"
+        every = try container.decodeIfPresent(Int.self, forKey: .every) ?? 1
+        unit = try container.decodeIfPresent(RepeatUnit.self, forKey: .unit) ?? .hours
+        isOn = try container.decodeIfPresent(Bool.self, forKey: .isOn) ?? true
+        spacingMinSeconds = try container.decodeIfPresent(Int.self, forKey: .spacingMinSeconds) ?? 120
+        spacingMaxSeconds = try container.decodeIfPresent(Int.self, forKey: .spacingMaxSeconds) ?? 10800
+        burstEnabled = try container.decodeIfPresent(Bool.self, forKey: .burstEnabled) ?? false
+        if let minMs = try container.decodeIfPresent(Int.self, forKey: .burstMinMilliseconds) {
+            burstMinMilliseconds = max(0, minMs)
+        } else if let minSec = try container.decodeIfPresent(Double.self, forKey: .burstMinSeconds) {
+            burstMinMilliseconds = max(0, Int((minSec * 1000).rounded()))
+        } else {
+            burstMinMilliseconds = 0
+        }
+        if let maxMs = try container.decodeIfPresent(Int.self, forKey: .burstMaxMilliseconds) {
+            burstMaxMilliseconds = max(0, maxMs)
+        } else if let maxSec = try container.decodeIfPresent(Double.self, forKey: .burstMaxSeconds) {
+            burstMaxMilliseconds = max(0, Int((maxSec * 1000).rounded()))
+        } else {
+            burstMaxMilliseconds = burstMinMilliseconds
+        }
+        burstCount = try container.decodeIfPresent(Int.self, forKey: .burstCount) ?? 4
+        burstEvery = try container.decodeIfPresent(Int.self, forKey: .burstEvery) ?? 20
+        burstEveryUnit = try container.decodeIfPresent(RepeatUnit.self, forKey: .burstEveryUnit) ?? .minutes
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(body, forKey: .body)
+        try container.encode(soundName, forKey: .soundName)
+        try container.encode(every, forKey: .every)
+        try container.encode(unit, forKey: .unit)
+        try container.encode(isOn, forKey: .isOn)
+        try container.encode(spacingMinSeconds, forKey: .spacingMinSeconds)
+        try container.encode(spacingMaxSeconds, forKey: .spacingMaxSeconds)
+        try container.encode(burstEnabled, forKey: .burstEnabled)
+        try container.encode(burstMinMilliseconds, forKey: .burstMinMilliseconds)
+        try container.encode(burstMaxMilliseconds, forKey: .burstMaxMilliseconds)
+        try container.encode(burstCount, forKey: .burstCount)
+        try container.encode(burstEvery, forKey: .burstEvery)
+        try container.encode(burstEveryUnit, forKey: .burstEveryUnit)
+    }
 }
 
 // MARK: - Template variables
@@ -750,7 +822,7 @@ final class Store: ObservableObject {
                 || old.body.contains("Facebook")
                 || old.body.contains("·")
                 || !old.burstEnabled
-                || (isShopifyStyle && old.burstMinSeconds > 0)
+                || (isShopifyStyle && old.burstMinMilliseconds > 0)
             guard isShopifyStyle && isOldFormat else { continue }
 
             var updated = Reminder.shopifyOrder
@@ -835,11 +907,26 @@ enum NotificationTiming {
         return Double.random(in: Double(lo)...Double(hi))
     }
 
+    static func burstStepMilliseconds(minMs: Int, maxMs: Int) -> Int {
+        let lo = max(0, min(minMs, maxMs))
+        let hi = max(lo, max(minMs, maxMs))
+        if hi == 0 { return 0 }
+        return Int.random(in: lo...hi)
+    }
+
+    /// Converts burst gap in ms to schedule offset. Instant (0ms) uses a tiny stagger so each ding is visible.
+    static func burstScheduleOffset(stepMs: Int) -> TimeInterval {
+        if stepMs > 0 { return Double(stepMs) / 1000 }
+        return 0.05
+    }
+
     static func burstStep(minSeconds: Double, maxSeconds: Double) -> TimeInterval {
-        let lo = max(0, min(minSeconds, maxSeconds))
-        let hi = max(lo, max(minSeconds, maxSeconds))
-        if hi <= 0 { return 0 }
-        return Double.random(in: lo...hi)
+        burstScheduleOffset(
+            stepMs: burstStepMilliseconds(
+                minMs: Int((minSeconds * 1000).rounded()),
+                maxMs: Int((maxSeconds * 1000).rounded())
+            )
+        )
     }
 
     static func nextBurstOffset(averageSeconds: TimeInterval) -> TimeInterval {
@@ -971,16 +1058,11 @@ final class NotificationManager {
                 && cumulative >= untilBurst
 
             if canBurst {
-                let (lo, hi) = reminder.normalizedBurstSeconds
+                let (lo, hi) = reminder.normalizedBurstMilliseconds
                 for burstIndex in 0..<reminder.burstCount {
                     if burstIndex > 0 {
-                        let step = NotificationTiming.burstStep(minSeconds: lo, maxSeconds: hi)
-                        if step > 0 {
-                            cumulative += step
-                        } else {
-                            // Same-second burst: stagger 1s so each notification stays visible.
-                            cumulative += 1
-                        }
+                        let stepMs = NotificationTiming.burstStepMilliseconds(minMs: lo, maxMs: hi)
+                        cumulative += NotificationTiming.burstScheduleOffset(stepMs: stepMs)
                     }
                     scheduled += 1
                     lastCounter = startingCounter + scheduled
@@ -1036,7 +1118,7 @@ final class NotificationManager {
             fireDate: fireDate
         )
         let trigger = UNTimeIntervalNotificationTrigger(
-            timeInterval: max(1, cumulative),
+            timeInterval: max(0.05, cumulative),
             repeats: false
         )
         let identifier = "\(reminder.id.uuidString)-\(counter)"
@@ -1074,18 +1156,14 @@ final class NotificationManager {
     /// Fires a burst starting ~2 seconds out — preview the rapid ding effect.
     func sendBurstTest(_ reminder: Reminder) async {
         let count = max(2, reminder.burstCount)
-        let (lo, hi) = reminder.normalizedBurstSeconds
+        let (lo, hi) = reminder.normalizedBurstMilliseconds
         var cumulative: TimeInterval = 2
         let baseCounter = CounterStore.current(reminder.id)
 
         for index in 1...count {
             if index > 1 {
-                let step = NotificationTiming.burstStep(minSeconds: lo, maxSeconds: hi)
-                if step > 0 {
-                    cumulative += step
-                } else {
-                    cumulative += 1
-                }
+                let stepMs = NotificationTiming.burstStepMilliseconds(minMs: lo, maxMs: hi)
+                cumulative += NotificationTiming.burstScheduleOffset(stepMs: stepMs)
             }
             let counter = baseCounter + index
             let fireDate = Date().addingTimeInterval(cumulative)
@@ -1096,7 +1174,7 @@ final class NotificationManager {
                 fireDate: fireDate
             )
             let trigger = UNTimeIntervalNotificationTrigger(
-                timeInterval: max(1, cumulative),
+                timeInterval: max(0.05, cumulative),
                 repeats: false
             )
             let request = UNNotificationRequest(

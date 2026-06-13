@@ -16,26 +16,30 @@ struct AddReminderView: View {
         case title, body
     }
 
+    @State private var burstAdjustStep = 1
+
     init(reminder: Reminder, onSave: @escaping (Reminder) -> Void) {
         _reminder = State(initialValue: reminder)
         self.onSave = onSave
     }
 
     private var burstGapDescription: String {
-        let (lo, hi) = reminder.normalizedBurstSeconds
-        let range = Reminder.formatBurstGapRange(min: lo, max: hi)
-        return range == "instant" ? "all dings together" : "\(range) apart"
+        let (lo, hi) = reminder.normalizedBurstMilliseconds
+        let range = Reminder.formatBurstGapRangeMilliseconds(min: lo, max: hi)
+        return range == "instant" ? "as fast as iOS allows (~50ms)" : "\(range) apart"
     }
 
     private var burstPreviewText: String {
-        let (lo, hi) = reminder.normalizedBurstSeconds
+        let (lo, hi) = reminder.normalizedBurstMilliseconds
         let span: String
         if lo <= 0 && hi <= 0 {
             span = "instant"
         } else if lo == hi {
-            span = String(format: "~%.1fs", max(0, Double(reminder.burstCount - 1) * lo))
+            let totalMs = max(0, reminder.burstCount - 1) * lo
+            span = Reminder.formatBurstGapMilliseconds(totalMs)
         } else {
-            span = String(format: "~%.1fs", max(0, Double(reminder.burstCount - 1) * hi))
+            let totalMs = max(0, reminder.burstCount - 1) * hi
+            span = "up to \(Reminder.formatBurstGapMilliseconds(totalMs))"
         }
         return "\(reminder.burstCount)× \(span) · every \(reminder.burstEvery) \(reminder.burstEveryUnit.label)"
     }
@@ -43,15 +47,14 @@ struct AddReminderView: View {
     @ViewBuilder
     private func burstGapField(
         label: String,
-        value: Binding<Double>,
-        range: ClosedRange<Double>,
+        value: Binding<Int>,
         onChange: (() -> Void)? = nil
     ) -> some View {
         HStack {
             Text(label)
             Spacer()
             Button {
-                value.wrappedValue = max(range.lowerBound, (value.wrappedValue - 0.1).rounded(toPlaces: 1))
+                value.wrappedValue = max(0, value.wrappedValue - burstAdjustStep)
                 onChange?()
             } label: {
                 Image(systemName: "minus.circle.fill")
@@ -59,22 +62,32 @@ struct AddReminderView: View {
             .buttonStyle(.plain)
 
             VStack(alignment: .trailing, spacing: 2) {
-                Text(Reminder.formatBurstGap(value.wrappedValue))
-                    .monospacedDigit()
-                Text("seconds")
+                TextField("ms", value: value, format: .number)
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 88)
+                    .onChange(of: value.wrappedValue) { newValue in
+                        value.wrappedValue = max(0, newValue)
+                        onChange?()
+                    }
+                Text(Reminder.formatBurstGapMilliseconds(value.wrappedValue))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            .frame(width: 72)
 
             Button {
-                value.wrappedValue = min(range.upperBound, (value.wrappedValue + 0.1).rounded(toPlaces: 1))
+                value.wrappedValue = value.wrappedValue + burstAdjustStep
                 onChange?()
             } label: {
                 Image(systemName: "plus.circle.fill")
             }
             .buttonStyle(.plain)
         }
+    }
+
+    private func applyBurstPreset(minMs: Int, maxMs: Int) {
+        reminder.burstMinMilliseconds = max(0, minMs)
+        reminder.burstMaxMilliseconds = max(0, maxMs)
     }
 
     @ViewBuilder
@@ -256,49 +269,53 @@ struct AddReminderView: View {
                     Toggle("Burst mode", isOn: $reminder.burstEnabled)
 
                     if reminder.burstEnabled {
-                        HStack {
-                            Button("Instant") {
-                                reminder.burstMinSeconds = 0
-                                reminder.burstMaxSeconds = 0
-                            }
-                            .buttonStyle(.bordered)
+                        Picker("Adjust step", selection: $burstAdjustStep) {
+                            Text("1 ms").tag(1)
+                            Text("10 ms").tag(10)
+                            Text("100 ms").tag(100)
+                            Text("1000 ms").tag(1000)
+                        }
 
-                            Button("0.1s") {
-                                reminder.burstMinSeconds = 0.1
-                                reminder.burstMaxSeconds = 0.1
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                Button("Instant") { applyBurstPreset(minMs: 0, maxMs: 0) }
+                                    .buttonStyle(.bordered)
+                                Button("50ms") { applyBurstPreset(minMs: 50, maxMs: 50) }
+                                    .buttonStyle(.bordered)
+                                Button("100ms") { applyBurstPreset(minMs: 100, maxMs: 100) }
+                                    .buttonStyle(.bordered)
+                                Button("250ms") { applyBurstPreset(minMs: 250, maxMs: 250) }
+                                    .buttonStyle(.bordered)
+                                Button("500ms") { applyBurstPreset(minMs: 500, maxMs: 500) }
+                                    .buttonStyle(.bordered)
+                                Button("1s") { applyBurstPreset(minMs: 1000, maxMs: 1000) }
+                                    .buttonStyle(.bordered)
                             }
-                            .buttonStyle(.bordered)
-
-                            Button("0.5s") {
-                                reminder.burstMinSeconds = 0.5
-                                reminder.burstMaxSeconds = 0.5
-                            }
-                            .buttonStyle(.bordered)
-
-                            Button("1s") {
-                                reminder.burstMinSeconds = 1
-                                reminder.burstMaxSeconds = 1
-                            }
-                            .buttonStyle(.bordered)
                         }
 
                         burstGapField(
                             label: "Gap from",
-                            value: $reminder.burstMinSeconds,
-                            range: 0...reminder.burstMaxSeconds
+                            value: $reminder.burstMinMilliseconds
                         ) {
-                            if reminder.burstMaxSeconds < reminder.burstMinSeconds {
-                                reminder.burstMaxSeconds = reminder.burstMinSeconds
+                            if reminder.burstMaxMilliseconds < reminder.burstMinMilliseconds {
+                                reminder.burstMaxMilliseconds = reminder.burstMinMilliseconds
                             }
                         }
 
                         burstGapField(
                             label: "Gap to",
-                            value: $reminder.burstMaxSeconds,
-                            range: reminder.burstMinSeconds...5
+                            value: $reminder.burstMaxMilliseconds
                         )
 
-                        Stepper(value: $reminder.burstCount, in: 2...8) {
+                        HStack {
+                            Text("Gap range")
+                            Spacer()
+                            Text(burstGapDescription)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.trailing)
+                        }
+
+                        Stepper(value: $reminder.burstCount, in: 2...20) {
                             Text("\(reminder.burstCount) dings per burst")
                         }
 
@@ -335,7 +352,7 @@ struct AddReminderView: View {
                     Text("Burst")
                 } footer: {
                     if reminder.burstEnabled {
-                        Text("0s = rapid ding-ding-ding burst like videos — all sounds fire together. Use 0.1–1s for a slightly spaced burst. Reopen the app to refill the next 64.")
+                        Text("Set burst gap in milliseconds — type any value (0 = instant ding-ding-ding). No upper limit. iOS may round gaps under 50ms when the app is closed.")
                     } else {
                         Text("Turn on for occasional rapid clusters between normal varied alerts.")
                     }
@@ -414,12 +431,5 @@ struct AddReminderView: View {
                 soundImportError = error.localizedDescription
             }
         }
-    }
-}
-
-private extension Double {
-    func rounded(toPlaces places: Int) -> Double {
-        let factor = pow(10, Double(places))
-        return (self * factor).rounded() / factor
     }
 }
