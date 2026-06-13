@@ -55,6 +55,8 @@ jobs:
           codesign --force --sign - --deep "Payload/Shopify.app"
           ditto -c -k --sequesterRsrc --keepParent Payload Shopify.ipa
           ls -lh Shopify.ipa
+          /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "Payload/Shopify.app/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "Payload/Shopify.app/Info.plist" || true
           echo "Made Shopify.ipa"
 
       - name: Upload IPA

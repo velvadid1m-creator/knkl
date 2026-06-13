@@ -801,8 +801,8 @@ enum SoundImportError: LocalizedError {
 final class Store: ObservableObject {
     @Published var reminders: [Reminder] = []
 
-    private let key = "reminders.v1"
-    private let shopifySeedKey = "seeded.shopify.v3"
+    private let key = "shopify.merchant.reminders.v1"
+    private let shopifySeedKey = "shopify.merchant.seeded.v1"
 
     init() {
         load()

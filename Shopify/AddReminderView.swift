@@ -369,7 +369,7 @@ struct AddReminderView: View {
                     }
                 }
             }
-            .navigationTitle("Notification")
+            .navigationTitle("Order notifications")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {

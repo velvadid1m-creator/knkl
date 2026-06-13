@@ -1,12 +1,20 @@
 import UIKit
 
 enum AppIconManager {
-    private static let selectionKey = "selectedAppIcon.v1"
+    private static let legacyKeys = [
+        "selectedAppIcon.v1",
+        "reminders.v1",
+        "seeded.shopify.v3",
+        "seeded.shopify.v2",
+        "seeded.shopify.v1",
+    ]
 
-    /// Always use the main Shopify icon — clears old alternate "P" icons from earlier builds.
+    /// Force the primary Shopify icon and purge legacy PingMe defaults.
     @MainActor
     static func ensureShopifyIcon() async {
-        UserDefaults.standard.removeObject(forKey: selectionKey)
+        for key in legacyKeys {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
         guard UIApplication.shared.supportsAlternateIcons else { return }
         try? await UIApplication.shared.setAlternateIconName(nil)
     }

@@ -34,6 +34,7 @@ struct DashboardShell: View {
     @EnvironmentObject private var store: Store
     @State private var tab = 0
     @State private var showNotifications = false
+    @State private var showHiddenSettings = false
 
     private var orderCounter: Int {
         guard let reminder = store.reminders.first else { return 9 }
@@ -42,7 +43,11 @@ struct DashboardShell: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            ShopifyHomeView(orderCounter: orderCounter, showNotifications: $showNotifications)
+            ShopifyHomeView(
+                orderCounter: orderCounter,
+                showNotifications: $showNotifications,
+                showHiddenSettings: $showHiddenSettings
+            )
                 .tabItem { Label("Home", systemImage: tab == 0 ? "house.fill" : "house") }
                 .tag(0)
 
@@ -66,6 +71,12 @@ struct DashboardShell: View {
         }
         .sheet(isPresented: $showNotifications) {
             ShopifyNotificationsView(orderCounter: orderCounter)
+        }
+        .sheet(isPresented: $showHiddenSettings) {
+            NavigationStack {
+                ShopifySettingsView()
+                    .environmentObject(store)
+            }
         }
     }
 }
@@ -429,6 +440,7 @@ private struct ShopifySearchBar: View {
 struct ShopifyHomeView: View {
     let orderCounter: Int
     @Binding var showNotifications: Bool
+    @Binding var showHiddenSettings: Bool
 
     private var orders: [DashboardOrder] {
         DashboardData.recentOrders(counter: orderCounter, limit: 12)
@@ -469,6 +481,10 @@ struct ShopifyHomeView: View {
                                         .font(.system(size: 36, weight: .semibold))
                                         .foregroundStyle(ShopifyTheme.text)
                                     DeltaBadge(text: salesDelta)
+                                }
+                                .contentShape(Rectangle())
+                                .onTapGesture(count: 3) {
+                                    showHiddenSettings = true
                                 }
 
                                 SalesChart(points: chartPoints)
@@ -910,8 +926,6 @@ struct ShopifyProductsView: View {
 // MARK: - Menu (real Shopify menu + hidden alert settings)
 
 struct ShopifyMenuView: View {
-    @EnvironmentObject private var store: Store
-
     var body: some View {
         NavigationStack {
             List {
@@ -940,25 +954,24 @@ struct ShopifyMenuView: View {
                     menuRow("Analytics", icon: "chart.line.uptrend.xyaxis")
                     menuRow("Marketing", icon: "megaphone")
                     menuRow("Discounts", icon: "percent")
+                    menuRow("Point of Sale", icon: "creditcard")
                 }
 
                 Section("Sales channels") {
                     menuRow("Online Store", icon: "globe")
                     menuRow("Shop", icon: "bag")
+                    menuRow("Google & YouTube", icon: "play.rectangle")
                 }
 
                 Section("Apps") {
                     menuRow("Inbox", icon: "message")
                     menuRow("Sidekick", icon: "sparkles")
+                    menuRow("Shopify Balance", icon: "building.columns")
                 }
 
                 Section {
-                    NavigationLink {
-                        ShopifySettingsView()
-                            .environmentObject(store)
-                    } label: {
-                        menuRow("Settings", icon: "gearshape", chevron: false)
-                    }
+                    menuRow("Help center", icon: "questionmark.circle")
+                    menuRow("What's new", icon: "gift")
                 }
             }
             .listStyle(.insetGrouped)
@@ -978,8 +991,8 @@ struct ShopifyMenuView: View {
 }
 
 struct ShopifySettingsView: View {
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var store: Store
-    @State private var showingAdd = false
     @State private var editing: Reminder?
 
     var body: some View {
@@ -987,21 +1000,22 @@ struct ShopifySettingsView: View {
             Section("Store") {
                 LabeledContent("Name", value: ShopifySampleData.defaultStore)
                 LabeledContent("Domain", value: "novuskits.myshopify.com")
+                LabeledContent("Plan", value: "Basic")
             }
 
-            Section("Notifications") {
-                Text("Order push notifications")
-                    .font(.subheadline)
-                    .foregroundStyle(ShopifyTheme.subdued)
+            Section("Order notifications") {
                 ForEach(store.reminders) { reminder in
                     Button { editing = reminder } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Order alerts")
+                                Text("New order alerts")
                                     .foregroundStyle(ShopifyTheme.text)
-                                Text(reminder.isOn ? "On" : "Off")
+                                Text(reminder.cadenceText)
                                     .font(.caption)
                                     .foregroundStyle(ShopifyTheme.subdued)
+                                Text(reminder.isOn ? "On" : "Off")
+                                    .font(.caption)
+                                    .foregroundStyle(reminder.isOn ? ShopifyTheme.success : ShopifyTheme.subdued)
                             }
                             Spacer()
                             Image(systemName: "chevron.right")
@@ -1010,7 +1024,6 @@ struct ShopifySettingsView: View {
                         }
                     }
                 }
-                Button("Add alert") { showingAdd = true }
             }
 
             Section {
@@ -1021,14 +1034,17 @@ struct ShopifySettingsView: View {
                         await NotificationManager.shared.sendBurstTest(reminder)
                     }
                 } label: {
-                    Label("Test notification burst", systemImage: "bell.badge")
+                    Label("Preview order burst", systemImage: "bell.badge")
                 }
             }
         }
-        .navigationTitle("Settings")
+        .navigationTitle("Store settings")
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showingAdd) {
-            AddReminderView(reminder: Reminder()) { store.upsert($0) }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Done") { dismiss() }
+                    .fontWeight(.semibold)
+            }
         }
         .sheet(item: $editing) { reminder in
             AddReminderView(reminder: reminder) { store.upsert($0) }
