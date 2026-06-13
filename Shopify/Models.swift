@@ -269,6 +269,10 @@ enum DashboardData {
     ]
 
     static func recentOrders(counter: Int, limit: Int = 24) -> [DashboardOrder] {
+        let history = NotificationHistoryStore.load()
+        if !history.isEmpty {
+            return Array(history.prefix(limit))
+        }
         let highest = max(1, counter)
         let lowest = max(1, highest - limit + 1)
         return (lowest...highest).reversed().map { makeOrder(counter: $0) }
@@ -477,10 +481,69 @@ enum CounterStore {
         UserDefaults.standard.set(value, forKey: key(id))
     }
 
+    static func bump(_ id: UUID, to counter: Int) {
+        set(id, max(current(id), counter))
+    }
+
     static func reset(_ id: UUID) {
         UserDefaults.standard.removeObject(forKey: key(id))
     }
 }
+
+enum NotificationPayload {
+    static let reminderID = "reminderID"
+    static let counter = "counter"
+    static let orderNumber = "orderNumber"
+}
+
+enum ScheduleCursorStore {
+    private static func key(_ id: UUID) -> String { "schedule.\(id.uuidString)" }
+
+    /// Last order counter already queued in pending notifications.
+    static func scheduledThrough(_ id: UUID) -> Int {
+        UserDefaults.standard.integer(forKey: key(id))
+    }
+
+    static func setScheduledThrough(_ id: UUID, _ value: Int) {
+        UserDefaults.standard.set(value, forKey: key(id))
+    }
+
+    static func reset(_ id: UUID) {
+        UserDefaults.standard.removeObject(forKey: key(id))
+    }
+}
+
+enum NotificationHistoryStore {
+    private static let key = "notification.history"
+    private static let limit = 80
+
+    static func record(reminderID: UUID, counter: Int) {
+        var history = load()
+        let order = DashboardData.makeOrder(counter: counter)
+        history.removeAll { $0.id == counter }
+        history.insert(order, at: 0)
+        if history.count > limit {
+            history = Array(history.prefix(limit))
+        }
+        if let data = try? JSONEncoder().encode(history) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    static func load() -> [DashboardOrder] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let decoded = try? JSONDecoder().decode([DashboardOrder].self, from: data) else {
+            return []
+        }
+        return decoded
+    }
+
+    static func reset() {
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+}
+
+extension DashboardOrder: Codable {}
 
 // MARK: - Sound choices (filenames must match files bundled in the app)
 
@@ -642,12 +705,19 @@ final class Store: ObservableObject {
             reminders.append(reminder)
         }
         save()
-        reschedule()
+        Task {
+            if reminder.isOn {
+                await NotificationManager.shared.rebuild(reminder)
+            } else {
+                await NotificationManager.shared.reschedule(reminders)
+            }
+        }
     }
 
     func delete(_ reminder: Reminder) {
         reminders.removeAll { $0.id == reminder.id }
         CounterStore.reset(reminder.id)
+        ScheduleCursorStore.reset(reminder.id)
         save()
         reschedule()
     }
@@ -706,16 +776,31 @@ final class NotificationManager {
     private let maxPending = 64
 
     func reschedule(_ reminders: [Reminder]) async {
-        center.removeAllPendingNotificationRequests()
-
+        let pending = await center.pendingNotificationRequests()
         let active = reminders.filter(\.isOn)
-        guard !active.isEmpty else { return }
 
+        guard !active.isEmpty else {
+            center.removeAllPendingNotificationRequests()
+            return
+        }
+
+        let activeIDs = Set(active.map(\.id))
+        let staleIDs = pending.compactMap { request -> String? in
+            guard let reminderID = Self.reminderID(from: request.identifier, activeIDs: activeIDs) else {
+                return request.identifier
+            }
+            return activeIDs.contains(reminderID) ? nil : request.identifier
+        }
+        if !staleIDs.isEmpty {
+            center.removePendingNotificationRequests(withIdentifiers: staleIDs)
+        }
+
+        let remaining = pending.filter { !staleIDs.contains($0.identifier) }
         let staticReminders = active.filter { !$0.usesDynamicText && $0.intervalSeconds >= 60 }
         let sequenced = active.filter { $0.usesDynamicText || $0.intervalSeconds < 60 }
-        let sequenceSlots = max(0, maxPending - staticReminders.count)
+        let sequenceSlots = max(0, maxPending - remaining.count)
 
-        for reminder in staticReminders {
+        for reminder in staticReminders where !remaining.contains(where: { $0.identifier == reminder.id.uuidString }) {
             await scheduleRepeating(reminder)
         }
 
@@ -723,8 +808,44 @@ final class NotificationManager {
 
         let perReminder = max(1, sequenceSlots / sequenced.count)
         for reminder in sequenced {
-            await scheduleSequence(reminder, count: perReminder)
+            await topUpSequence(reminder, count: perReminder, existing: remaining)
         }
+    }
+
+    /// Rebuild all pending notifications for one reminder (after settings change).
+    func rebuild(_ reminder: Reminder) async {
+        let pending = await center.pendingNotificationRequests()
+        let ids = pending
+            .filter { Self.matches(reminderID: reminder.id, identifier: $0.identifier) }
+            .map(\.identifier)
+        if !ids.isEmpty {
+            center.removePendingNotificationRequests(withIdentifiers: ids)
+        }
+        ScheduleCursorStore.setScheduledThrough(reminder.id, CounterStore.current(reminder.id))
+        await scheduleSequence(
+            reminder,
+            count: maxPending,
+            startingCounter: CounterStore.current(reminder.id)
+        )
+    }
+
+    private func topUpSequence(_ reminder: Reminder, count: Int, existing: [UNNotificationRequest]) async {
+        let existingForReminder = existing.filter { Self.matches(reminderID: reminder.id, identifier: $0.identifier) }
+        guard existingForReminder.count < maxPending else { return }
+
+        let slots = min(count, maxPending - existingForReminder.count)
+        guard slots > 0 else { return }
+
+        let highestScheduled = existingForReminder
+            .compactMap { Self.counter(from: $0) }
+            .max() ?? ScheduleCursorStore.scheduledThrough(reminder.id)
+        let startCounter = max(CounterStore.current(reminder.id), highestScheduled)
+
+        await scheduleSequence(
+            reminder,
+            count: slots,
+            startingCounter: startCounter
+        )
     }
 
     private func scheduleRepeating(_ reminder: Reminder) async {
@@ -740,14 +861,18 @@ final class NotificationManager {
     }
 
     /// Schedules separate alerts so each one can have its own counter/random text.
-    private func scheduleSequence(_ reminder: Reminder, count: Int) async {
+    private func scheduleSequence(
+        _ reminder: Reminder,
+        count: Int,
+        startingCounter: Int
+    ) async {
         let interval = max(1, reminder.intervalSeconds)
-        let baseCounter = CounterStore.current(reminder.id)
         var cumulative: TimeInterval = 0
         var scheduled = 0
         var untilBurst = reminder.burstEnabled
             ? NotificationTiming.nextBurstOffset(averageSeconds: reminder.burstEverySeconds)
             : .infinity
+        var lastCounter = startingCounter
 
         while scheduled < count {
             let canBurst = reminder.burstEnabled
@@ -761,13 +886,17 @@ final class NotificationManager {
                         let step = NotificationTiming.burstStep(minSeconds: lo, maxSeconds: hi)
                         if step > 0 {
                             cumulative += step
+                        } else {
+                            // Same-second burst: stagger 1s so each notification stays visible.
+                            cumulative += 1
                         }
                     }
                     scheduled += 1
+                    lastCounter = startingCounter + scheduled
                     await enqueueSequenceAlert(
                         reminder: reminder,
-                        slot: scheduled,
-                        counter: baseCounter + scheduled,
+                        slot: lastCounter,
+                        counter: lastCounter,
                         cumulative: cumulative
                     )
                 }
@@ -786,10 +915,11 @@ final class NotificationManager {
             }
             cumulative += step
             scheduled += 1
+            lastCounter = startingCounter + scheduled
             await enqueueSequenceAlert(
                 reminder: reminder,
-                slot: scheduled,
-                counter: baseCounter + scheduled,
+                slot: lastCounter,
+                counter: lastCounter,
                 cumulative: cumulative
             )
 
@@ -798,7 +928,7 @@ final class NotificationManager {
             }
         }
 
-        CounterStore.set(reminder.id, baseCounter + scheduled)
+        ScheduleCursorStore.setScheduledThrough(reminder.id, lastCounter)
     }
 
     private func enqueueSequenceAlert(
@@ -818,9 +948,36 @@ final class NotificationManager {
             timeInterval: max(1, cumulative),
             repeats: false
         )
-        let identifier = "\(reminder.id.uuidString)-\(slot)"
+        let identifier = "\(reminder.id.uuidString)-\(counter)"
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
         try? await center.add(request)
+    }
+
+    func handleDelivery(_ notification: UNNotification) {
+        let userInfo = notification.request.content.userInfo
+        guard
+            let idString = userInfo[NotificationPayload.reminderID] as? String,
+            let reminderID = UUID(uuidString: idString),
+            let counter = userInfo[NotificationPayload.counter] as? Int
+        else { return }
+
+        CounterStore.bump(reminderID, to: counter)
+        NotificationHistoryStore.record(reminderID: reminderID, counter: counter)
+    }
+
+    private static func matches(reminderID: UUID, identifier: String) -> Bool {
+        identifier == reminderID.uuidString || identifier.hasPrefix(reminderID.uuidString + "-")
+    }
+
+    private static func reminderID(from identifier: String, activeIDs: Set<UUID>) -> UUID? {
+        for id in activeIDs where matches(reminderID: id, identifier: identifier) {
+            return id
+        }
+        return nil
+    }
+
+    private static func counter(from request: UNNotificationRequest) -> Int? {
+        request.content.userInfo[NotificationPayload.counter] as? Int
     }
 
     /// Fires a burst starting ~2 seconds out — preview the rapid ding effect.
@@ -835,6 +992,8 @@ final class NotificationManager {
                 let step = NotificationTiming.burstStep(minSeconds: lo, maxSeconds: hi)
                 if step > 0 {
                     cumulative += step
+                } else {
+                    cumulative += 1
                 }
             }
             let counter = baseCounter + index
@@ -885,7 +1044,17 @@ final class NotificationManager {
         let rawTitle = reminder.title.isEmpty ? fallbackTitle : reminder.title
         content.title = NotificationTemplate.render(rawTitle, counter: counter, fireDate: fireDate)
         content.body = NotificationTemplate.render(reminder.body, counter: counter, fireDate: fireDate)
-        content.threadIdentifier = reminder.id.uuidString
+        let orderNumber = ShopifySampleData.orderNumber(counter: counter)
+        // Unique thread per order so iOS doesn't collapse notifications into one stack.
+        content.threadIdentifier = "order-\(orderNumber)"
+        content.summaryArgument = orderNumber
+        content.summaryArgumentCount = 1
+        content.interruptionLevel = .timeSensitive
+        content.userInfo = [
+            NotificationPayload.reminderID: reminder.id.uuidString,
+            NotificationPayload.counter: counter,
+            NotificationPayload.orderNumber: orderNumber
+        ]
         content.sound = reminder.soundName.isEmpty
             ? .default
             : UNNotificationSound(named: UNNotificationSoundName(reminder.soundName))
@@ -895,8 +1064,18 @@ final class NotificationManager {
 
 /// Lets notifications show (with sound) even while the app is open — handy for the test button.
 final class ForegroundDelegate: NSObject, UNUserNotificationCenterDelegate {
-    func userNotificationCenter(_ center: UNUserNotificationCenter,
-                                willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        [.banner, .sound, .badge]
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        NotificationManager.shared.handleDelivery(notification)
+        return [.banner, .sound, .badge, .list]
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        NotificationManager.shared.handleDelivery(response.notification)
     }
 }
