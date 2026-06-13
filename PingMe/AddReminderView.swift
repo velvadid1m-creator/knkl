@@ -64,7 +64,7 @@ struct AddReminderView: View {
                         }
                     }
                     if reminder.usesDynamicText {
-                        Button("Reset order # to 1001", role: .destructive) {
+                        Button("Reset alert counter", role: .destructive) {
                             CounterStore.reset(reminder.id)
                         }
                     }

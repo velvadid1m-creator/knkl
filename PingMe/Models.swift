@@ -60,12 +60,12 @@ struct Reminder: Identifiable, Codable, Equatable {
         NotificationTemplate.isDynamic(title) || NotificationTemplate.isDynamic(body)
     }
 
-    /// Pre-built Shopify-style new order alert.
+    /// Matches real Shopify order notifications.
     static let shopifyOrder = Reminder(
-        title: "New order #{order}",
-        body: "{customer} ordered {item} — {total}",
+        title: "",
+        body: "{store} has a new order for {items_phrase} totaling {total} from {source}.",
         soundName: "ding.wav",
-        every: 5,
+        every: 3,
         unit: .minutes,
         isOn: true
     )
@@ -74,40 +74,30 @@ struct Reminder: Identifiable, Codable, Equatable {
 // MARK: - Template variables
 
 enum ShopifySampleData {
-    static let customers = [
-        "Jordan Smith", "Alex Rivera", "Sam Chen", "Taylor Brooks", "Morgan Lee",
-        "Casey Nguyen", "Riley Patel", "Jamie Wilson", "Avery Brown", "Quinn Davis",
-        "Drew Martinez", "Skyler Kim", "Reese Johnson", "Blake Anderson", "Emery White"
+    static let stores = [
+        "HoH Fashion", "HoH Fashion", "HoH Fashion",
+        "Main Street Boutique", "Urban Threads", "Glow Skincare"
     ]
 
-    static let products = [
-        "Classic Hoodie", "Wireless Earbuds", "Ceramic Mug", "Canvas Tote Bag",
-        "Running Shoes", "Scented Candle", "Phone Case", "Sticker Pack",
-        "Minimal Watch", "Linen Shirt", "Gym Bottle", "Desk Lamp",
-        "Leather Wallet", "Beanie Hat", "Protein Bars (12-pack)"
+    static let sources = [
+        "Online Store", "Online Store", "Online Store",
+        "Facebook & Instagram", "TikTok Shop", "Shop app", "Google"
     ]
 
-    static func orderNumber(counter: Int) -> String {
-        "\(1000 + counter)"
+    static func randomStore() -> String {
+        stores.randomElement() ?? "HoH Fashion"
     }
 
-    static func randomCustomer() -> String {
-        customers.randomElement() ?? "Customer"
+    static func randomSource() -> String {
+        sources.randomElement() ?? "Online Store"
     }
 
-    static func randomItem() -> String {
-        let product = products.randomElement() ?? "Item"
-        let qty = Int.random(in: 1...3)
-        return qty == 1 ? product : "\(product) × \(qty)"
+    static func randomItemCountPhrase() -> String {
+        let count = Int.random(in: 1...4)
+        return count == 1 ? "1 item" : "\(count) items"
     }
 
-    static func randomItems() -> String {
-        let count = Int.random(in: 2...3)
-        let picks = (0..<count).map { _ in randomItem() }
-        return picks.joined(separator: ", ")
-    }
-
-    static func randomTotal(minDollars: Int = 12, maxDollars: Int = 349) -> String {
+    static func randomTotal(minDollars: Int = 8, maxDollars: Int = 250) -> String {
         let cents = Int.random(in: minDollars * 100...maxDollars * 100)
         let dollars = cents / 100
         let remainder = cents % 100
@@ -117,37 +107,27 @@ enum ShopifySampleData {
 
 enum NotificationTemplate {
     static let variableHelp = """
-    Shopify style:
-    {order} — order # going up (1001, 1002…)
-    {customer} — random buyer name
-    {item} — random product (sometimes ×2)
-    {items} — 2–3 random products
-    {total} — random price like $47.99
-    {total:20-150} — price in a range
-
-    Other:
-    {counter} — plain number 1, 2, 3…
-    {random} / {random:1-50} — random number
-    {time} / {date}
+    Shopify style (like the real app):
+    {store} — store name (default HoH Fashion)
+    {items_phrase} — "1 item" or "2 items"
+    {total} — price like $70.49
+    {source} — Online Store, Facebook & Instagram, etc.
     """
 
     static let insertable: [(label: String, token: String)] = [
-        ("Order #", "{order}"),
-        ("Customer", "{customer}"),
-        ("Item", "{item}"),
-        ("Items", "{items}"),
+        ("Store", "{store}"),
+        ("Items", "{items_phrase}"),
         ("Total", "{total}"),
-        ("Total range", "{total:20-150}"),
+        ("Source", "{source}"),
+        ("Total range", "{total:10-80}"),
         ("Counter", "{counter}"),
-        ("Random", "{random}"),
-        ("Time", "{time}"),
-        ("Date", "{date}")
+        ("Random", "{random}")
     ]
 
     private static let dynamicMarkers = [
         "{counter}", "{count}", "{index}", "{random",
-        "{time}", "{date}", "{order", "{customer}",
-        "{item}", "{items}", "{total", "{amount"
+        "{time}", "{date}", "{store}", "{items_phrase}",
+        "{item_count}", "{source}", "{total", "{amount"
     ]
 
     static func isDynamic(_ text: String) -> Bool {
@@ -162,23 +142,18 @@ enum NotificationTemplate {
         result = result.replacingOccurrences(of: "{count}", with: "\(counter)")
         result = result.replacingOccurrences(of: "{index}", with: "\(counter)")
 
-        result = replaceToken("{order}", in: result) { _ in
-            ShopifySampleData.orderNumber(counter: counter)
+        result = replaceToken("{store}", in: result) { _ in
+            ShopifySampleData.randomStore()
         }
-        result = replaceToken("{order_number}", in: result) { _ in
-            ShopifySampleData.orderNumber(counter: counter)
+        result = replaceToken("{items_phrase}", in: result) { _ in
+            ShopifySampleData.randomItemCountPhrase()
         }
-        result = replaceToken("{customer}", in: result) { _ in
-            ShopifySampleData.randomCustomer()
+        result = replaceToken("{item_count}", in: result) { _ in
+            let count = Int.random(in: 1...4)
+            return "\(count)"
         }
-        result = replaceToken("{item}", in: result) { _ in
-            ShopifySampleData.randomItem()
-        }
-        result = replaceToken("{product}", in: result) { _ in
-            ShopifySampleData.randomItem()
-        }
-        result = replaceToken("{items}", in: result) { _ in
-            ShopifySampleData.randomItems()
+        result = replaceToken("{source}", in: result) { _ in
+            ShopifySampleData.randomSource()
         }
 
         let timeFormatter = DateFormatter()
@@ -361,7 +336,7 @@ final class Store: ObservableObject {
     @Published var reminders: [Reminder] = []
 
     private let key = "reminders.v1"
-    private let shopifySeedKey = "seeded.shopify.v1"
+    private let shopifySeedKey = "seeded.shopify.v2"
 
     init() {
         load()
@@ -371,7 +346,16 @@ final class Store: ObservableObject {
     private func seedShopifySampleIfNeeded() {
         guard !UserDefaults.standard.bool(forKey: shopifySeedKey) else { return }
         UserDefaults.standard.set(true, forKey: shopifySeedKey)
-        reminders.append(Reminder.shopifyOrder)
+
+        if let idx = reminders.firstIndex(where: {
+            $0.body.contains("{customer}") || $0.title.contains("#{order}")
+        }) {
+            var updated = Reminder.shopifyOrder
+            updated.id = reminders[idx].id
+            reminders[idx] = updated
+        } else {
+            reminders.insert(Reminder.shopifyOrder, at: 0)
+        }
         save()
         reschedule()
     }
