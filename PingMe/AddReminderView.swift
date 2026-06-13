@@ -1,6 +1,4 @@
 import SwiftUI
-import PhotosUI
-import UIKit
 import UniformTypeIdentifiers
 
 struct AddReminderView: View {
@@ -9,8 +7,6 @@ struct AddReminderView: View {
     @State private var reminder: Reminder
     private let onSave: (Reminder) -> Void
 
-    @State private var photoItem: PhotosPickerItem?
-    @State private var previewImage: UIImage?
     @State private var soundOptions = SoundStore.allOptions()
     @State private var showingSoundImporter = false
     @State private var soundImportError: String?
@@ -64,32 +60,6 @@ struct AddReminderView: View {
                 }
 
                 Section {
-                    PhotosPicker(selection: $photoItem, matching: .images) {
-                        Label(reminder.imageFileName == nil ? "Choose image" : "Change image",
-                              systemImage: "photo")
-                    }
-                    if let image = previewImage {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxHeight: 150)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                    }
-                    if reminder.imageFileName != nil {
-                        Button("Remove image", role: .destructive) {
-                            if let name = reminder.imageFileName { ImageStore.delete(name) }
-                            reminder.imageFileName = nil
-                            previewImage = nil
-                            photoItem = nil
-                        }
-                    }
-                } header: {
-                    Text("Image")
-                } footer: {
-                    Text("Your image becomes the big round icon on the left of the notification — like a contact photo — instead of the default app bell.")
-                }
-
-                Section {
                     Stepper(value: $reminder.every, in: everyRange) {
                         Text("Every \(reminder.every)")
                     }
@@ -132,11 +102,7 @@ struct AddReminderView: View {
                     .fontWeight(.semibold)
                 }
             }
-            .onChange(of: photoItem) { _ in
-                Task { await loadPickedImage() }
-            }
             .task {
-                await loadExistingPreview()
                 refreshSoundOptions()
             }
             .fileImporter(
@@ -175,23 +141,5 @@ struct AddReminderView: View {
                 soundImportError = error.localizedDescription
             }
         }
-    }
-
-    private func loadPickedImage() async {
-        guard let item = photoItem,
-              let data = try? await item.loadTransferable(type: Data.self),
-              let image = UIImage(data: data) else { return }
-        let jpeg = image.jpegData(compressionQuality: 0.9) ?? data
-        if let old = reminder.imageFileName { ImageStore.delete(old) }
-        reminder.imageFileName = ImageStore.save(jpeg, ext: "jpg")
-        previewImage = image
-    }
-
-    private func loadExistingPreview() async {
-        guard previewImage == nil,
-              let name = reminder.imageFileName,
-              let data = try? Data(contentsOf: ImageStore.url(name)),
-              let image = UIImage(data: data) else { return }
-        previewImage = image
     }
 }

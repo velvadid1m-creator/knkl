@@ -39,7 +39,6 @@ struct Reminder: Identifiable, Codable, Equatable {
     var title: String = ""
     var body: String = ""
     var soundName: String = "chime.wav"   // "" == system default
-    var imageFileName: String? = nil
     var every: Int = 1
     var unit: RepeatUnit = .hours
     var isOn: Bool = true
@@ -147,35 +146,45 @@ enum SoundImportError: LocalizedError {
     }
 }
 
-// MARK: - Image storage (Documents/images)
+// MARK: - App logo (one image for all notifications)
 
-enum ImageStore {
-    private static var dir: URL {
+enum AppLogoStore {
+    private static let fileName = "app-logo.jpg"
+
+    private static var fileURL: URL {
         let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let folder = base.appendingPathComponent("images", isDirectory: true)
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        return folder
+        return base.appendingPathComponent(fileName)
     }
 
-    static func url(_ name: String) -> URL {
-        dir.appendingPathComponent(name)
+    private static var avatarURL: URL {
+        let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return base.appendingPathComponent("app-logo.avatar.png")
     }
 
-    @discardableResult
-    static func save(_ data: Data, ext: String = "jpg") -> String {
-        let name = UUID().uuidString + "." + ext
-        try? data.write(to: url(name))
-        return name
+    static var hasLogo: Bool {
+        FileManager.default.fileExists(atPath: fileURL.path)
     }
 
-    static func delete(_ name: String) {
-        try? FileManager.default.removeItem(at: url(name))
-        try? FileManager.default.removeItem(at: avatarsDirectory.appendingPathComponent(name))
+    static func save(_ data: Data) {
+        try? data.write(to: fileURL)
+        try? FileManager.default.removeItem(at: avatarURL)
     }
 
-    /// Square PNG copy for notification avatars — iOS reads these more reliably than raw camera JPEGs.
-    static func notificationAvatarURL(for source: URL) -> URL? {
-        guard let data = try? Data(contentsOf: source),
+    static func clear() {
+        try? FileManager.default.removeItem(at: fileURL)
+        try? FileManager.default.removeItem(at: avatarURL)
+    }
+
+    static func previewImage() -> UIImage? {
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
+        return UIImage(data: data)
+    }
+
+    static func notificationAvatarURL() -> URL? {
+        if FileManager.default.fileExists(atPath: avatarURL.path) {
+            return avatarURL
+        }
+        guard let data = try? Data(contentsOf: fileURL),
               let image = UIImage(data: data) else { return nil }
 
         let side = min(image.size.width, image.size.height)
@@ -188,19 +197,9 @@ enum ImageStore {
                 height: image.size.height
             ))
         }
-        guard let png = square.pngData() else { return source }
-
-        let name = source.lastPathComponent + ".avatar.png"
-        let destination = avatarsDirectory.appendingPathComponent(name)
-        try? png.write(to: destination)
-        return destination
-    }
-
-    private static var avatarsDirectory: URL {
-        let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let folder = base.appendingPathComponent("avatars", isDirectory: true)
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        return folder
+        guard let png = square.pngData() else { return fileURL }
+        try? png.write(to: avatarURL)
+        return avatarURL
     }
 }
 
@@ -240,8 +239,11 @@ final class Store: ObservableObject {
 
     func delete(_ reminder: Reminder) {
         reminders.removeAll { $0.id == reminder.id }
-        if let name = reminder.imageFileName { ImageStore.delete(name) }
         save()
+        reschedule()
+    }
+
+    func refreshNotifications() {
         reschedule()
     }
 
@@ -338,14 +340,11 @@ final class NotificationManager {
             ? .default
             : UNNotificationSound(named: UNNotificationSoundName(reminder.soundName))
 
-        guard let name = reminder.imageFileName else { return content }
-
-        let fileURL = ImageStore.url(name)
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return content }
+        guard let imageURL = AppLogoStore.notificationAvatarURL() else { return content }
 
         return await applyCommunicationAvatar(
             to: content,
-            imageURL: fileURL,
+            imageURL: imageURL,
             displayName: title,
             conversationID: reminder.id.uuidString
         )
@@ -358,7 +357,7 @@ final class NotificationManager {
         displayName: String,
         conversationID: String
     ) async -> UNMutableNotificationContent {
-        let avatarURL = ImageStore.notificationAvatarURL(for: imageURL) ?? imageURL
+        let avatarURL = imageURL
         let handle = INPersonHandle(value: conversationID, type: .unknown)
         let sender = INPerson(
             personHandle: handle,
