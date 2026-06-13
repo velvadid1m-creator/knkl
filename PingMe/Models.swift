@@ -1,5 +1,7 @@
 import Foundation
 import UserNotifications
+import Intents
+import UIKit
 
 // MARK: - Repeat unit
 
@@ -168,6 +170,37 @@ enum ImageStore {
 
     static func delete(_ name: String) {
         try? FileManager.default.removeItem(at: url(name))
+        try? FileManager.default.removeItem(at: avatarsDirectory.appendingPathComponent(name))
+    }
+
+    /// Square PNG copy for notification avatars — iOS reads these more reliably than raw camera JPEGs.
+    static func notificationAvatarURL(for source: URL) -> URL? {
+        guard let data = try? Data(contentsOf: source),
+              let image = UIImage(data: data) else { return nil }
+
+        let side = min(image.size.width, image.size.height)
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side))
+        let square = renderer.image { _ in
+            image.draw(in: CGRect(
+                x: (side - image.size.width) / 2,
+                y: (side - image.size.height) / 2,
+                width: image.size.width,
+                height: image.size.height
+            ))
+        }
+        guard let png = square.pngData() else { return source }
+
+        let name = source.lastPathComponent + ".avatar.png"
+        let destination = avatarsDirectory.appendingPathComponent(name)
+        try? png.write(to: destination)
+        return destination
+    }
+
+    private static var avatarsDirectory: URL {
+        let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let folder = base.appendingPathComponent("avatars", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
     }
 }
 
@@ -267,7 +300,7 @@ final class NotificationManager {
     }
 
     private func scheduleRepeating(_ reminder: Reminder) async {
-        let content = makeContent(for: reminder, fallbackTitle: "Reminder")
+        let content = await makeContent(for: reminder, fallbackTitle: "Reminder")
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: reminder.intervalSeconds, repeats: true)
         let request = UNNotificationRequest(identifier: reminder.id.uuidString, content: content, trigger: trigger)
         try? await center.add(request)
@@ -276,7 +309,7 @@ final class NotificationManager {
     /// iOS won't repeat faster than 60s, so queue many one-shot alerts instead.
     private func scheduleBurst(_ reminder: Reminder, count: Int) async {
         let interval = max(1, reminder.intervalSeconds)
-        let content = makeContent(for: reminder, fallbackTitle: "Reminder")
+        let content = await makeContent(for: reminder, fallbackTitle: "Reminder")
 
         for index in 1...count {
             let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval * Double(index), repeats: false)
@@ -288,27 +321,97 @@ final class NotificationManager {
 
     /// Fires once, ~2 seconds out, so you can preview a notification.
     func sendTest(_ reminder: Reminder) async {
-        let content = makeContent(for: reminder, fallbackTitle: "Test")
-        if content.body.isEmpty { content.body = "This is a test 🔔" }
+        var content = await makeContent(for: reminder, fallbackTitle: "Test")
+        if content.body.isEmpty { content.body = "This is a test" }
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 2, repeats: false)
         let request = UNNotificationRequest(identifier: "test-" + UUID().uuidString, content: content, trigger: trigger)
         try? await center.add(request)
     }
 
-    private func makeContent(for reminder: Reminder, fallbackTitle: String) -> UNMutableNotificationContent {
+    private func makeContent(for reminder: Reminder, fallbackTitle: String) async -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
-        content.title = reminder.title.isEmpty ? fallbackTitle : reminder.title
+        let title = reminder.title.isEmpty ? fallbackTitle : reminder.title
+        content.title = title
         content.body = reminder.body
+        content.threadIdentifier = reminder.id.uuidString
         content.sound = reminder.soundName.isEmpty
             ? .default
             : UNNotificationSound(named: UNNotificationSoundName(reminder.soundName))
 
-        if let name = reminder.imageFileName {
-            let fileURL = ImageStore.url(name)
-            if FileManager.default.fileExists(atPath: fileURL.path),
-               let attachment = try? UNNotificationAttachment(identifier: name, url: fileURL, options: nil) {
-                content.attachments = [attachment]
+        guard let name = reminder.imageFileName else { return content }
+
+        let fileURL = ImageStore.url(name)
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return content }
+
+        return await applyCommunicationAvatar(
+            to: content,
+            imageURL: fileURL,
+            displayName: title,
+            conversationID: reminder.id.uuidString
+        )
+    }
+
+    /// Shows the picked image as the large left-side notification avatar (Messages-style).
+    private func applyCommunicationAvatar(
+        to content: UNMutableNotificationContent,
+        imageURL: URL,
+        displayName: String,
+        conversationID: String
+    ) async -> UNMutableNotificationContent {
+        let avatarURL = ImageStore.notificationAvatarURL(for: imageURL) ?? imageURL
+        let handle = INPersonHandle(value: conversationID, type: .unknown)
+        let sender = INPerson(
+            personHandle: handle,
+            nameComponents: nil,
+            displayName: displayName,
+            image: INImage(url: avatarURL),
+            contactIdentifier: nil,
+            customIdentifier: conversationID,
+            isMe: false,
+            suggestionType: .none
+        )
+
+        let intent = INSendMessageIntent(
+            recipients: nil,
+            outgoingMessageType: .outgoingMessageText,
+            content: content.body,
+            speakableGroupName: nil,
+            conversationIdentifier: conversationID,
+            serviceName: "PingMe",
+            sender: sender,
+            attachments: nil
+        )
+
+        let interaction = INInteraction(intent: intent, response: nil)
+        interaction.direction = .incoming
+
+        do {
+            try await interaction.donate()
+            let updated = try content.updating(from: intent)
+            if let mutable = updated.mutableCopy() as? UNMutableNotificationContent {
+                mutable.sound = content.sound
+                mutable.threadIdentifier = content.threadIdentifier
+                return mutable
             }
+        } catch {
+            // Fall through to attachment preview if communication style isn't available.
+        }
+
+        return attachImageFallback(to: content, imageURL: avatarURL, identifier: conversationID)
+    }
+
+    private func attachImageFallback(
+        to content: UNMutableNotificationContent,
+        imageURL: URL,
+        identifier: String
+    ) -> UNMutableNotificationContent {
+        let rect: [String: NSNumber] = ["X": 0, "Y": 0, "Width": 1, "Height": 1]
+        if let attachment = try? UNNotificationAttachment(
+            identifier: identifier,
+            url: imageURL,
+            options: [UNNotificationAttachmentOptionsThumbnailClippingRectKey: rect]
+        ) {
+            content.attachments = [attachment]
         }
         return content
     }

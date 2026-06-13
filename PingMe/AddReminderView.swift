@@ -86,7 +86,7 @@ struct AddReminderView: View {
                 } header: {
                     Text("Image")
                 } footer: {
-                    Text("Shows inside the notification. The small corner badge is always the app's own icon — that's an iOS rule, not changeable per notification.")
+                    Text("Your image becomes the big round icon on the left of the notification — like a contact photo — instead of the default app bell.")
                 }
 
                 Section {
