@@ -41,11 +41,15 @@ struct Reminder: Identifiable, Codable, Equatable {
     var unit: RepeatUnit = .hours
     var isOn: Bool = true
 
-    /// Fast cluster of alerts (e.g. 1–6 seconds apart), separated by longer gaps.
+    /// Gap between normal alerts — random between min and max seconds.
+    var spacingMinSeconds: Int = 120
+    var spacingMaxSeconds: Int = 10800
+
+    /// Fast cluster of alerts, separated by longer gaps.
     var burstEnabled: Bool = false
     var burstMinSeconds: Int = 1
-    var burstMaxSeconds: Int = 6
-    var burstCount: Int = 4
+    var burstMaxSeconds: Int = 1
+    var burstCount: Int = 3
     var burstEvery: Int = 20
     var burstEveryUnit: RepeatUnit = .minutes
 
@@ -57,31 +61,42 @@ struct Reminder: Identifiable, Codable, Equatable {
         Double(max(1, burstEvery)) * burstEveryUnit.seconds
     }
 
+    var normalizedSpacingSeconds: (min: Int, max: Int) {
+        let minValue = max(1, min(spacingMinSeconds, spacingMaxSeconds))
+        let maxValue = max(minValue, max(spacingMinSeconds, spacingMaxSeconds))
+        return (minValue, maxValue)
+    }
+
     var normalizedBurstSeconds: (min: Int, max: Int) {
         let minValue = max(1, min(burstMinSeconds, burstMaxSeconds))
         let maxValue = max(minValue, max(burstMinSeconds, burstMaxSeconds))
         return (minValue, maxValue)
     }
 
+    static func formatDuration(_ seconds: Int) -> String {
+        let value = max(1, seconds)
+        if value < 60 { return "\(value)s" }
+        if value < 3600 {
+            let m = value / 60
+            let s = value % 60
+            return s == 0 ? "\(m)m" : "\(m)m \(s)s"
+        }
+        let h = value / 3600
+        let m = (value % 3600) / 60
+        return m == 0 ? "\(h)h" : "\(h)h \(m)m"
+    }
+
     var cadenceText: String {
+        let (spacingLo, spacingHi) = normalizedSpacingSeconds
         if burstEnabled {
-            let (lo, hi) = normalizedBurstSeconds
+            let (burstLo, burstHi) = normalizedBurstSeconds
             let burstUnit = burstEveryUnit.label
             let burstWord = burstEvery == 1 ? String(burstUnit.dropLast()) : burstUnit
-            if usesDynamicText {
-                return "Burst \(burstCount)× (\(lo)–\(hi)s) · varied + every ~\(burstEvery) \(burstWord)"
-            }
-            return "Burst \(burstCount)× every \(lo)–\(hi)s · repeats ~\(burstEvery) \(burstWord)"
+            let burstGap = burstLo == burstHi ? "\(burstLo)s" : "\(burstLo)–\(burstHi)s"
+            return "Varied \(Reminder.formatDuration(spacingLo))–\(Reminder.formatDuration(spacingHi)) · burst \(burstCount)× (\(burstGap)) every ~\(burstEvery) \(burstWord)"
         }
-        if usesDynamicText {
-            let word: String
-            switch unit {
-            case .seconds: word = every == 1 ? "second" : "seconds"
-            case .minutes: word = every == 1 ? "minute" : "minutes"
-            case .hours:   word = every == 1 ? "hour" : "hours"
-            case .days:    word = every == 1 ? "day" : "days"
-            }
-            return "Varied · ~\(every) \(word)"
+        if usesDynamicText || spacingLo != spacingHi {
+            return "Varied \(Reminder.formatDuration(spacingLo))–\(Reminder.formatDuration(spacingHi))"
         }
         let word: String
         switch unit {
@@ -105,10 +120,12 @@ struct Reminder: Identifiable, Codable, Equatable {
         every: 5,
         unit: .minutes,
         isOn: true,
+        spacingMinSeconds: 120,
+        spacingMaxSeconds: 10800,
         burstEnabled: true,
         burstMinSeconds: 1,
-        burstMaxSeconds: 6,
-        burstCount: 4,
+        burstMaxSeconds: 1,
+        burstCount: 3,
         burstEvery: 20,
         burstEveryUnit: .minutes
     )
@@ -447,22 +464,13 @@ final class Store: ObservableObject {
                 || old.body.contains("Facebook")
                 || old.body.contains("·")
                 || !old.burstEnabled
+                || (isShopifyStyle && old.burstMaxSeconds > 1)
             guard isShopifyStyle && isOldFormat else { continue }
 
             var updated = Reminder.shopifyOrder
             updated.id = old.id
-            updated.every = old.every
-            updated.unit = old.unit
             updated.isOn = old.isOn
             updated.soundName = old.soundName
-            if old.burstEnabled {
-                updated.burstEnabled = old.burstEnabled
-                updated.burstMinSeconds = old.burstMinSeconds
-                updated.burstMaxSeconds = old.burstMaxSeconds
-                updated.burstCount = old.burstCount
-                updated.burstEvery = old.burstEvery
-                updated.burstEveryUnit = old.burstEveryUnit
-            }
             reminders[index] = updated
             changed = true
         }
@@ -528,17 +536,10 @@ final class Store: ObservableObject {
 // MARK: - Notification timing
 
 enum NotificationTiming {
-    /// Realistic gaps — mostly minutes apart, sometimes up to a few hours.
-    static func randomDelay(averageSeconds: TimeInterval) -> TimeInterval {
-        let base = max(60, averageSeconds)
-        switch Int.random(in: 1...100) {
-        case 1...45:
-            return Double.random(in: max(90, base * 0.35)...max(150, base * 1.4))
-        case 46...80:
-            return Double.random(in: max(300, base * 0.7)...max(900, base * 5))
-        default:
-            return Double.random(in: max(3600, base * 4)...max(10800, base * 36))
-        }
+    static func randomSpacing(minSeconds: Int, maxSeconds: Int) -> TimeInterval {
+        let lo = max(1, min(minSeconds, maxSeconds))
+        let hi = max(lo, max(minSeconds, maxSeconds))
+        return Double.random(in: Double(lo)...Double(hi))
     }
 
     static func burstStep(minSeconds: Int, maxSeconds: Int) -> TimeInterval {
@@ -640,9 +641,13 @@ final class NotificationManager {
                 continue
             }
 
-            let step = reminder.usesDynamicText
-                ? NotificationTiming.randomDelay(averageSeconds: interval)
-                : interval
+            let step: TimeInterval
+            if reminder.usesDynamicText {
+                let (lo, hi) = reminder.normalizedSpacingSeconds
+                step = NotificationTiming.randomSpacing(minSeconds: lo, maxSeconds: hi)
+            } else {
+                step = interval
+            }
             cumulative += step
             scheduled += 1
             await enqueueSequenceAlert(

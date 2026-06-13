@@ -21,15 +21,70 @@ struct AddReminderView: View {
         self.onSave = onSave
     }
 
-    private var everyRange: ClosedRange<Int> {
-        switch reminder.unit {
-        case .seconds: return 1...300
-        case .minutes: return 1...999
-        case .hours:   return 1...999
-        case .days:    return 1...999
+    private var burstGapDescription: String {
+        let (lo, hi) = reminder.normalizedBurstSeconds
+        if lo == hi { return "\(lo)s apart" }
+        return "\(lo)–\(hi)s apart"
+    }
+
+    private var burstPreviewText: String {
+        let (lo, hi) = reminder.normalizedBurstSeconds
+        let gap = lo == hi ? "\(lo)s" : "\(lo)–\(hi)s"
+        let span = lo == hi
+            ? max(0, (reminder.burstCount - 1) * lo)
+            : (reminder.burstCount - 1) * hi
+        return "\(reminder.burstCount)× in ~\(span)s · every \(reminder.burstEvery) \(reminder.burstEveryUnit.label)"
+    }
+
+    @ViewBuilder
+    private func spacingField(
+        label: String,
+        value: Binding<Int>,
+        range: ClosedRange<Int>,
+        onChange: (() -> Void)? = nil
+    ) -> some View {
+        HStack {
+            Text(label)
+            Spacer()
+            Button {
+                value.wrappedValue = max(range.lowerBound, value.wrappedValue - spacingStep(for: value.wrappedValue))
+                onChange?()
+            } label: {
+                Image(systemName: "minus.circle.fill")
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .trailing, spacing: 2) {
+                TextField("sec", value: value, format: .number)
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 56)
+                    .onChange(of: value.wrappedValue) { newValue in
+                        value.wrappedValue = min(range.upperBound, max(range.lowerBound, newValue))
+                        onChange?()
+                    }
+                Text(Reminder.formatDuration(value.wrappedValue))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Button {
+                value.wrappedValue = min(range.upperBound, value.wrappedValue + spacingStep(for: value.wrappedValue))
+                onChange?()
+            } label: {
+                Image(systemName: "plus.circle.fill")
+            }
+            .buttonStyle(.plain)
         }
     }
 
+    private func spacingStep(for seconds: Int) -> Int {
+        switch seconds {
+        case ..<60: return 1
+        case ..<600: return 10
+        case ..<3600: return 30
+        default: return 300
+        }
     private var burstEveryRange: ClosedRange<Int> {
         switch reminder.burstEveryUnit {
         case .seconds: return 5...600
@@ -126,41 +181,53 @@ struct AddReminderView: View {
                 }
 
                 Section {
-                    Stepper(value: $reminder.every, in: everyRange) {
-                        Text("Every \(reminder.every)")
-                    }
-                    Picker("Unit", selection: $reminder.unit) {
-                        ForEach(RepeatUnit.allCases) { unit in
-                            Text(unit.label).tag(unit)
+                    spacingField(
+                        label: "Shortest gap",
+                        value: $reminder.spacingMinSeconds,
+                        range: 1...reminder.spacingMaxSeconds
+                    ) {
+                        if reminder.spacingMaxSeconds < reminder.spacingMinSeconds {
+                            reminder.spacingMaxSeconds = reminder.spacingMinSeconds
                         }
                     }
-                    .onChange(of: reminder.unit) { _ in
-                        reminder.every = min(reminder.every, everyRange.upperBound)
+
+                    spacingField(
+                        label: "Longest gap",
+                        value: $reminder.spacingMaxSeconds,
+                        range: reminder.spacingMinSeconds...86400
+                    )
+
+                    HStack {
+                        Text("Preview")
+                        Spacer()
+                        Text("\(Reminder.formatDuration(reminder.normalizedSpacingSeconds.min)) – \(Reminder.formatDuration(reminder.normalizedSpacingSeconds.max))")
+                            .foregroundStyle(.secondary)
                     }
                 } header: {
-                    Text("Normal timing")
+                    Text("Varied spacing")
                 } footer: {
-                    Text(reminder.usesDynamicText
-                         ? "Between bursts, alerts vary — mostly every few minutes, sometimes up to a few hours."
-                         : "Steady interval between single alerts when burst mode is off.")
+                    Text("Each normal alert waits a random number of seconds between your shortest and longest gap.")
                 }
 
                 Section {
                     Toggle("Burst mode", isOn: $reminder.burstEnabled)
 
                     if reminder.burstEnabled {
-                        Stepper(value: $reminder.burstMinSeconds, in: 1...60) {
-                            Text("From \(reminder.burstMinSeconds)s")
-                        }
-                        .onChange(of: reminder.burstMinSeconds) { _ in
+                        spacingField(
+                            label: "Burst gap from",
+                            value: $reminder.burstMinSeconds,
+                            range: 1...reminder.burstMaxSeconds
+                        ) {
                             if reminder.burstMaxSeconds < reminder.burstMinSeconds {
                                 reminder.burstMaxSeconds = reminder.burstMinSeconds
                             }
                         }
 
-                        Stepper(value: $reminder.burstMaxSeconds, in: reminder.burstMinSeconds...120) {
-                            Text("To \(reminder.burstMaxSeconds)s")
-                        }
+                        spacingField(
+                            label: "Burst gap to",
+                            value: $reminder.burstMaxSeconds,
+                            range: reminder.burstMinSeconds...60
+                        )
 
                         Stepper(value: $reminder.burstCount, in: 2...12) {
                             Text("\(reminder.burstCount) alerts per burst")
@@ -177,15 +244,22 @@ struct AddReminderView: View {
                         .onChange(of: reminder.burstEveryUnit) { _ in
                             reminder.burstEvery = min(reminder.burstEvery, burstEveryRange.upperBound)
                         }
+
+                        HStack {
+                            Text("Burst preview")
+                            Spacer()
+                            Text(burstPreviewText)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.trailing)
+                        }
                     }
                 } header: {
                     Text("Burst")
                 } footer: {
                     if reminder.burstEnabled {
-                        let (lo, hi) = reminder.normalizedBurstSeconds
-                        Text("Occasional rapid clusters — e.g. \(reminder.burstCount) orders \(lo)–\(hi) seconds apart, roughly every \(reminder.burstEvery) \(reminder.burstEveryUnit.label). Reopen the app to refill the next 64.")
+                        Text("A burst fires \(reminder.burstCount) alerts \(burstGapDescription). iOS needs at least 1 second between alerts, so 3× with 1s gap lands in about 2 seconds. Reopen the app to refill the next 64.")
                     } else {
-                        Text("Turn on to occasionally fire a fast cluster of alerts. Reopen the app to refill the next 64.")
+                        Text("Turn on for occasional rapid clusters between normal varied alerts.")
                     }
                 }
 
