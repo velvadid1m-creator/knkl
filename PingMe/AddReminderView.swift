@@ -30,6 +30,15 @@ struct AddReminderView: View {
         }
     }
 
+    private var burstEveryRange: ClosedRange<Int> {
+        switch reminder.burstEveryUnit {
+        case .seconds: return 5...600
+        case .minutes: return 1...999
+        case .hours:   return 1...999
+        case .days:    return 1...30
+        }
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -129,9 +138,55 @@ struct AddReminderView: View {
                         reminder.every = min(reminder.every, everyRange.upperBound)
                     }
                 } header: {
-                    Text("How often")
+                    Text("Normal timing")
                 } footer: {
-                    Text("Shopify-style variables change each alert. Timing varies — mostly every few minutes, sometimes up to a few hours. Reopen the app to refill the next 64.")
+                    Text(reminder.usesDynamicText
+                         ? "Between bursts, alerts vary — mostly every few minutes, sometimes up to a few hours."
+                         : "Steady interval between single alerts when burst mode is off.")
+                }
+
+                Section {
+                    Toggle("Burst mode", isOn: $reminder.burstEnabled)
+
+                    if reminder.burstEnabled {
+                        Stepper(value: $reminder.burstMinSeconds, in: 1...60) {
+                            Text("From \(reminder.burstMinSeconds)s")
+                        }
+                        .onChange(of: reminder.burstMinSeconds) { _ in
+                            if reminder.burstMaxSeconds < reminder.burstMinSeconds {
+                                reminder.burstMaxSeconds = reminder.burstMinSeconds
+                            }
+                        }
+
+                        Stepper(value: $reminder.burstMaxSeconds, in: reminder.burstMinSeconds...120) {
+                            Text("To \(reminder.burstMaxSeconds)s")
+                        }
+
+                        Stepper(value: $reminder.burstCount, in: 2...12) {
+                            Text("\(reminder.burstCount) alerts per burst")
+                        }
+
+                        Stepper(value: $reminder.burstEvery, in: burstEveryRange) {
+                            Text("Burst every \(reminder.burstEvery)")
+                        }
+                        Picker("Burst unit", selection: $reminder.burstEveryUnit) {
+                            ForEach(RepeatUnit.allCases) { unit in
+                                Text(unit.label).tag(unit)
+                            }
+                        }
+                        .onChange(of: reminder.burstEveryUnit) { _ in
+                            reminder.burstEvery = min(reminder.burstEvery, burstEveryRange.upperBound)
+                        }
+                    }
+                } header: {
+                    Text("Burst")
+                } footer: {
+                    if reminder.burstEnabled {
+                        let (lo, hi) = reminder.normalizedBurstSeconds
+                        Text("Occasional rapid clusters — e.g. \(reminder.burstCount) orders \(lo)–\(hi) seconds apart, roughly every \(reminder.burstEvery) \(reminder.burstEveryUnit.label). Reopen the app to refill the next 64.")
+                    } else {
+                        Text("Turn on to occasionally fire a fast cluster of alerts. Reopen the app to refill the next 64.")
+                    }
                 }
 
                 Section {

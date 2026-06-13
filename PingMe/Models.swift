@@ -41,11 +41,38 @@ struct Reminder: Identifiable, Codable, Equatable {
     var unit: RepeatUnit = .hours
     var isOn: Bool = true
 
+    /// Fast cluster of alerts (e.g. 1–6 seconds apart), separated by longer gaps.
+    var burstEnabled: Bool = false
+    var burstMinSeconds: Int = 1
+    var burstMaxSeconds: Int = 6
+    var burstCount: Int = 4
+    var burstEvery: Int = 20
+    var burstEveryUnit: RepeatUnit = .minutes
+
     var intervalSeconds: TimeInterval {
         Double(max(1, every)) * unit.seconds
     }
 
+    var burstEverySeconds: TimeInterval {
+        Double(max(1, burstEvery)) * burstEveryUnit.seconds
+    }
+
+    var normalizedBurstSeconds: (min: Int, max: Int) {
+        let minValue = max(1, min(burstMinSeconds, burstMaxSeconds))
+        let maxValue = max(minValue, max(burstMinSeconds, burstMaxSeconds))
+        return (minValue, maxValue)
+    }
+
     var cadenceText: String {
+        if burstEnabled {
+            let (lo, hi) = normalizedBurstSeconds
+            let burstUnit = burstEveryUnit.label
+            let burstWord = burstEvery == 1 ? String(burstUnit.dropLast()) : burstUnit
+            if usesDynamicText {
+                return "Burst \(burstCount)× (\(lo)–\(hi)s) · varied + every ~\(burstEvery) \(burstWord)"
+            }
+            return "Burst \(burstCount)× every \(lo)–\(hi)s · repeats ~\(burstEvery) \(burstWord)"
+        }
         if usesDynamicText {
             let word: String
             switch unit {
@@ -77,7 +104,13 @@ struct Reminder: Identifiable, Codable, Equatable {
         soundName: "ding.wav",
         every: 5,
         unit: .minutes,
-        isOn: true
+        isOn: true,
+        burstEnabled: true,
+        burstMinSeconds: 1,
+        burstMaxSeconds: 6,
+        burstCount: 4,
+        burstEvery: 20,
+        burstEveryUnit: .minutes
     )
 }
 
@@ -413,6 +446,7 @@ final class Store: ObservableObject {
                 || (old.title.isEmpty && old.body.contains("totaling"))
                 || old.body.contains("Facebook")
                 || old.body.contains("·")
+                || !old.burstEnabled
             guard isShopifyStyle && isOldFormat else { continue }
 
             var updated = Reminder.shopifyOrder
@@ -421,6 +455,14 @@ final class Store: ObservableObject {
             updated.unit = old.unit
             updated.isOn = old.isOn
             updated.soundName = old.soundName
+            if old.burstEnabled {
+                updated.burstEnabled = old.burstEnabled
+                updated.burstMinSeconds = old.burstMinSeconds
+                updated.burstMaxSeconds = old.burstMaxSeconds
+                updated.burstCount = old.burstCount
+                updated.burstEvery = old.burstEvery
+                updated.burstEveryUnit = old.burstEveryUnit
+            }
             reminders[index] = updated
             changed = true
         }
@@ -498,6 +540,16 @@ enum NotificationTiming {
             return Double.random(in: max(3600, base * 4)...max(10800, base * 36))
         }
     }
+
+    static func burstStep(minSeconds: Int, maxSeconds: Int) -> TimeInterval {
+        let lo = max(1, min(minSeconds, maxSeconds))
+        let hi = max(lo, max(minSeconds, maxSeconds))
+        return Double.random(in: Double(lo)...Double(hi))
+    }
+
+    static func nextBurstOffset(averageSeconds: TimeInterval) -> TimeInterval {
+        max(60, averageSeconds) * Double.random(in: 0.65...1.35)
+    }
 }
 
 // MARK: - Notifications
@@ -558,27 +610,73 @@ final class NotificationManager {
         let interval = max(1, reminder.intervalSeconds)
         let baseCounter = CounterStore.current(reminder.id)
         var cumulative: TimeInterval = 0
+        var scheduled = 0
+        var untilBurst = reminder.burstEnabled
+            ? NotificationTiming.nextBurstOffset(averageSeconds: reminder.burstEverySeconds)
+            : .infinity
 
-        for index in 1...count {
-            let counter = baseCounter + index
+        while scheduled < count {
+            let canBurst = reminder.burstEnabled
+                && scheduled + reminder.burstCount <= count
+                && cumulative >= untilBurst
+
+            if canBurst {
+                let (lo, hi) = reminder.normalizedBurstSeconds
+                for burstIndex in 0..<reminder.burstCount {
+                    if burstIndex > 0 {
+                        cumulative += NotificationTiming.burstStep(minSeconds: lo, maxSeconds: hi)
+                    }
+                    scheduled += 1
+                    await enqueueSequenceAlert(
+                        reminder: reminder,
+                        slot: scheduled,
+                        counter: baseCounter + scheduled,
+                        cumulative: cumulative
+                    )
+                }
+                untilBurst = cumulative + NotificationTiming.nextBurstOffset(
+                    averageSeconds: reminder.burstEverySeconds
+                )
+                continue
+            }
+
             let step = reminder.usesDynamicText
                 ? NotificationTiming.randomDelay(averageSeconds: interval)
                 : interval
             cumulative += step
-            let fireDate = Date().addingTimeInterval(cumulative)
-            let content = makeContent(
-                for: reminder,
-                fallbackTitle: "Reminder",
-                counter: counter,
-                fireDate: fireDate
+            scheduled += 1
+            await enqueueSequenceAlert(
+                reminder: reminder,
+                slot: scheduled,
+                counter: baseCounter + scheduled,
+                cumulative: cumulative
             )
-            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: cumulative, repeats: false)
-            let identifier = "\(reminder.id.uuidString)-\(index)"
-            let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
-            try? await center.add(request)
+
+            if reminder.burstEnabled {
+                untilBurst -= step
+            }
         }
 
-        CounterStore.set(reminder.id, baseCounter + count)
+        CounterStore.set(reminder.id, baseCounter + scheduled)
+    }
+
+    private func enqueueSequenceAlert(
+        reminder: Reminder,
+        slot: Int,
+        counter: Int,
+        cumulative: TimeInterval
+    ) async {
+        let fireDate = Date().addingTimeInterval(cumulative)
+        let content = makeContent(
+            for: reminder,
+            fallbackTitle: "Reminder",
+            counter: counter,
+            fireDate: fireDate
+        )
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: cumulative, repeats: false)
+        let identifier = "\(reminder.id.uuidString)-\(slot)"
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+        try? await center.add(request)
     }
 
     /// Fires once, ~2 seconds out, so you can preview a notification.
