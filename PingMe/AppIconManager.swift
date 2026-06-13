@@ -34,6 +34,7 @@ enum AppIconManager {
         }
     }
 
+    @MainActor
     static func apply(_ iconName: String?) async throws {
         guard UIApplication.shared.supportsAlternateIcons else {
             throw AppIconError.notSupported
