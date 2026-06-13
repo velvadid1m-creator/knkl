@@ -46,11 +46,15 @@ jobs:
           set -e
           APP_PATH="build/Release-iphoneos/PingMe.app"
           if [ ! -d "$APP_PATH" ]; then
-            echo "Build output not found at $APP_PATH"; ls -R build/Build/Products || true; exit 1
+            echo "Build output not found at $APP_PATH"; ls -R build || true; exit 1
           fi
+          rm -rf Payload PingMe.ipa
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
-          zip -r PingMe.ipa Payload >/dev/null
+          # Ad-hoc sign so Sideloadly can re-sign the IPA (unsigned builds often fail with "Invalid file")
+          codesign --force --sign - --deep "Payload/PingMe.app"
+          ditto -c -k --sequesterRsrc --keepParent Payload PingMe.ipa
+          ls -lh PingMe.ipa
           echo "Made PingMe.ipa"
 
       - name: Upload IPA
