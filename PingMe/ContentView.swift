@@ -7,12 +7,18 @@ struct ContentView: View {
     @EnvironmentObject private var store: Store
     @State private var showingAdd = false
     @State private var editing: Reminder?
-    @State private var logoImage: UIImage? = AppLogoStore.previewImage()
+    @State private var selectedIconName: String? = AppIconManager.selectedIconName
+    @State private var iconError: String?
+    @State private var customPhotoItem: PhotosPickerItem?
+    @State private var customIconPreview: UIImage?
+    @State private var customIconSaved = false
+
+    private let iconColumns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 4)
 
     var body: some View {
         NavigationStack {
             List {
-                logoSection
+                appIconSection
 
                 if store.reminders.isEmpty {
                     Section {
@@ -22,10 +28,9 @@ struct ContentView: View {
                                 .foregroundStyle(.secondary)
                             Text("No notifications yet")
                                 .font(.headline)
-                            Text("Tap + to create one. Every alert will use your app logo above.")
+                            Text("Tap + to create one.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 24)
@@ -66,97 +71,102 @@ struct ContentView: View {
             }
             .onChange(of: scenePhase) { phase in
                 guard phase == .active else { return }
-                logoImage = AppLogoStore.previewImage()
                 Task { await NotificationManager.shared.reschedule(store.reminders) }
             }
-            .onAppear {
-                logoImage = AppLogoStore.previewImage()
+            .onChange(of: customPhotoItem) { _ in
+                Task { await importCustomIcon() }
+            }
+            .alert("Couldn't change icon", isPresented: Binding(
+                get: { iconError != nil },
+                set: { if !$0 { iconError = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(iconError ?? "")
             }
         }
     }
 
-    private var logoSection: some View {
+    private var appIconSection: some View {
         Section {
-            AppLogoPicker(logoImage: $logoImage)
-        } header: {
-            Text("App logo")
-        } footer: {
-            Text("Pick one image — it shows on every notification instead of the default bell.")
-        }
-    }
-}
-
-private struct AppLogoPicker: View {
-    @EnvironmentObject private var store: Store
-    @Binding var logoImage: UIImage?
-
-    @State private var photoItem: PhotosPickerItem?
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Group {
-                if let logoImage {
-                    Image(uiImage: logoImage)
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    ZStack {
-                        Color(.secondarySystemFill)
-                        Image(systemName: "photo")
-                            .font(.system(size: 36))
-                            .foregroundStyle(.secondary)
+            LazyVGrid(columns: iconColumns, spacing: 12) {
+                ForEach(AppIconManager.choices) { choice in
+                    Button {
+                        Task { await selectIcon(choice.iconName) }
+                    } label: {
+                        VStack(spacing: 6) {
+                            RoundedRectangle(cornerRadius: 14)
+                                .fill(choice.color)
+                                .frame(width: 58, height: 58)
+                                .overlay {
+                                    if isSelected(choice.iconName) {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.title3)
+                                            .foregroundStyle(.white)
+                                            .shadow(radius: 2)
+                                    }
+                                }
+                            Text(choice.label)
+                                .font(.caption)
+                                .foregroundStyle(.primary)
+                        }
                     }
+                    .buttonStyle(.plain)
                 }
             }
-            .frame(width: 96, height: 96)
-            .clipShape(RoundedRectangle(cornerRadius: 20))
-            .overlay(
-                RoundedRectangle(cornerRadius: 20)
-                    .strokeBorder(Color(.separator), lineWidth: 1)
-            )
+            .padding(.vertical, 4)
 
-            PhotosPicker(selection: $photoItem, matching: .images) {
-                Label(logoImage == nil ? "Choose app logo" : "Change app logo", systemImage: "photo.on.rectangle")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-
-            if logoImage != nil {
-                Button("Remove logo", role: .destructive) {
-                    AppLogoStore.clear()
-                    logoImage = nil
-                    photoItem = nil
-                    store.refreshNotifications()
-                }
+            PhotosPicker(selection: $customPhotoItem, matching: .images) {
+                Label("Use my own image", systemImage: "photo.on.rectangle.angled")
             }
 
-            Button {
-                Task {
-                    await NotificationManager.shared.requestAuth()
-                    await NotificationManager.shared.sendTest(
-                        Reminder(title: "PingMe", body: "Preview of your notification logo")
-                    )
-                }
-            } label: {
-                Label("Test notification", systemImage: "paperplane")
+            if let customIconPreview {
+                Image(uiImage: customIconPreview)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxHeight: 120)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
             }
-            .disabled(logoImage == nil)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
-        .onChange(of: photoItem) { _ in
-            Task { await loadPickedImage() }
+
+            if customIconSaved {
+                Text("Image saved. Reinstall the app once with this image baked in, then pick Custom above.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("App icon")
+        } footer: {
+            Text("Changes the home screen icon and the small icon on notifications. Preset colors switch instantly. Your own image needs one reinstall to bake it in.")
         }
     }
 
-    private func loadPickedImage() async {
-        guard let item = photoItem,
+    private func isSelected(_ iconName: String?) -> Bool {
+        selectedIconName == iconName
+    }
+
+    private func selectIcon(_ iconName: String?) async {
+        do {
+            try await AppIconManager.apply(iconName)
+            selectedIconName = iconName
+        } catch {
+            iconError = error.localizedDescription
+        }
+    }
+
+    private func importCustomIcon() async {
+        guard let item = customPhotoItem,
               let data = try? await item.loadTransferable(type: Data.self),
               let image = UIImage(data: data) else { return }
-        let jpeg = image.jpegData(compressionQuality: 0.9) ?? data
-        AppLogoStore.save(jpeg)
-        logoImage = image
-        store.refreshNotifications()
+
+        customIconPreview = image
+        customIconSaved = AppIconManager.saveCustomIconSource(image) != nil
+
+        do {
+            try await AppIconManager.apply("AppIcon-Custom")
+            selectedIconName = "AppIcon-Custom"
+        } catch {
+            iconError = error.localizedDescription
+        }
     }
 }
 
