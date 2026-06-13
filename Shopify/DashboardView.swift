@@ -1,25 +1,27 @@
 import SwiftUI
 
-// MARK: - Theme
+// MARK: - Shopify design tokens (Polaris mobile)
 
 enum ShopifyTheme {
-    static let green = Color(red: 0.0, green: 0.502, blue: 0.376)
-    static let darkGreen = Color(red: 0.0, green: 0.345, blue: 0.255)
-    static let background = Color(red: 0.965, green: 0.965, blue: 0.969)
+    static let brand = Color(red: 0, green: 0.502, blue: 0.376)           // #008060
+    static let brandDark = Color(red: 0.004, green: 0.361, blue: 0.271)    // #015C43
+    static let surface = Color(red: 0.965, green: 0.965, blue: 0.969)     // #F6F6F7
+    static let surfaceSubdued = Color(red: 0.937, green: 0.941, blue: 0.949)
     static let card = Color.white
-    static let textPrimary = Color(red: 0.125, green: 0.133, blue: 0.137)
-    static let textSecondary = Color(red: 0.427, green: 0.443, blue: 0.459)
-    static let border = Color(red: 0.878, green: 0.878, blue: 0.878)
-    static let success = Color(red: 0.0, green: 0.502, blue: 0.376)
-    static let warning = Color(red: 0.737, green: 0.553, blue: 0.0)
+    static let text = Color(red: 0.125, green: 0.133, blue: 0.137)       // #202223
+    static let subdued = Color(red: 0.427, green: 0.443, blue: 0.459)    // #6D7175
+    static let border = Color(red: 0.882, green: 0.890, blue: 0.898)        // #E1E3E5
+    static let success = Color(red: 0.075, green: 0.573, blue: 0.365)
+    static let warning = Color(red: 0.737, green: 0.553, blue: 0)
+    static let critical = Color(red: 0.796, green: 0.255, blue: 0.169)
 }
 
-// MARK: - Root shell
+// MARK: - Root
 
 struct DashboardShell: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var store: Store
-    @State private var selectedTab = 0
+    @State private var tab = 0
 
     private var orderCounter: Int {
         guard let reminder = store.reminders.first else { return 9 }
@@ -27,24 +29,24 @@ struct DashboardShell: View {
     }
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            DashboardHomeView(orderCounter: orderCounter)
-                .tabItem { Label("Home", systemImage: "house.fill") }
+        TabView(selection: $tab) {
+            ShopifyHomeView(orderCounter: orderCounter)
+                .tabItem { Label("Home", systemImage: tab == 0 ? "house.fill" : "house") }
                 .tag(0)
 
-            DashboardOrdersView(orderCounter: orderCounter)
-                .tabItem { Label("Orders", systemImage: "shippingbox.fill") }
+            ShopifyOrdersView(orderCounter: orderCounter)
+                .tabItem { Label("Orders", systemImage: "list.clipboard") }
                 .tag(1)
 
-            DashboardProductsView()
-                .tabItem { Label("Products", systemImage: "tag.fill") }
+            ShopifyProductsView()
+                .tabItem { Label("Products", systemImage: "tag") }
                 .tag(2)
 
-            DashboardAlertsView()
-                .tabItem { Label("Alerts", systemImage: "bell.badge.fill") }
+            ShopifyMenuView()
+                .tabItem { Label("Menu", systemImage: "line.3.horizontal") }
                 .tag(3)
         }
-        .tint(ShopifyTheme.green)
+        .tint(ShopifyTheme.brand)
         .onChange(of: scenePhase) { phase in
             guard phase == .active else { return }
             Task { await NotificationManager.shared.reschedule(store.reminders) }
@@ -52,223 +54,368 @@ struct DashboardShell: View {
     }
 }
 
-// MARK: - Shared chrome
+// MARK: - Shared components
 
-private struct DashboardHeader: View {
-    let title: String
-    var showsStore: Bool = true
+private struct ShopifyBagMark: View {
+    var size: CGFloat = 28
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 2) {
-                    if showsStore {
-                        Text(ShopifySampleData.defaultStore)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(ShopifyTheme.textSecondary)
-                    }
-                    Text(title)
-                        .font(.title2.bold())
-                        .foregroundStyle(ShopifyTheme.textPrimary)
-                }
-                Spacer()
-                Image(systemName: "bag.fill")
-                    .font(.title3)
-                    .foregroundStyle(.white)
-                    .frame(width: 36, height: 36)
-                    .background(ShopifyTheme.darkGreen, in: RoundedRectangle(cornerRadius: 8))
-            }
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.22, style: .continuous)
+                .fill(ShopifyTheme.brandDark)
+                .frame(width: size, height: size)
+            Image(systemName: "bag.fill")
+                .font(.system(size: size * 0.46, weight: .semibold))
+                .foregroundStyle(.white)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal)
-        .padding(.top, 8)
     }
 }
 
-private struct StatCard: View {
-    let title: String
-    let value: String
-    let footnote: String
+private struct ShopifyStoreBar: View {
+    var showsSearch = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        HStack(spacing: 12) {
+            ShopifyBagMark(size: 34)
+            Button {} label: {
+                HStack(spacing: 4) {
+                    Text(ShopifySampleData.defaultStore)
+                        .font(.headline)
+                        .foregroundStyle(ShopifyTheme.text)
+                    Image(systemName: "chevron.down")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(ShopifyTheme.subdued)
+                }
+            }
+            .buttonStyle(.plain)
+            Spacer()
+            if showsSearch {
+                Image(systemName: "magnifyingglass")
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(ShopifyTheme.text)
+            }
+            Image(systemName: "bell")
+                .font(.body.weight(.medium))
+                .foregroundStyle(ShopifyTheme.text)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(ShopifyTheme.card)
+    }
+}
+
+private struct DateRangePill: View {
+    let label: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.subheadline.weight(.semibold))
+            Image(systemName: "chevron.down")
+                .font(.caption2.weight(.bold))
+        }
+        .foregroundStyle(ShopifyTheme.text)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(ShopifyTheme.surfaceSubdued, in: Capsule())
+    }
+}
+
+private struct SalesChart: View {
+    let points: [CGFloat]
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = geo.size.height
+            let maxY = max(points.max() ?? 1, 0.01)
+            let step = w / CGFloat(max(points.count - 1, 1))
+
+            ZStack {
+                Path { path in
+                    guard points.count > 1 else { return }
+                    path.move(to: CGPoint(x: 0, y: h - (points[0] / maxY) * h * 0.85))
+                    for index in 1..<points.count {
+                        let x = CGFloat(index) * step
+                        let y = h - (points[index] / maxY) * h * 0.85
+                        path.addLine(to: CGPoint(x: x, y: y))
+                    }
+                }
+                .stroke(ShopifyTheme.brand, style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+
+                Path { path in
+                    guard points.count > 1 else { return }
+                    path.move(to: CGPoint(x: 0, y: h))
+                    path.addLine(to: CGPoint(x: 0, y: h - (points[0] / maxY) * h * 0.85))
+                    for index in 1..<points.count {
+                        let x = CGFloat(index) * step
+                        let y = h - (points[index] / maxY) * h * 0.85
+                        path.addLine(to: CGPoint(x: x, y: y))
+                    }
+                    path.addLine(to: CGPoint(x: CGFloat(points.count - 1) * step, y: h))
+                    path.closeSubpath()
+                }
+                .fill(
+                    LinearGradient(
+                        colors: [ShopifyTheme.brand.opacity(0.28), ShopifyTheme.brand.opacity(0.02)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+            }
+        }
+        .frame(height: 120)
+    }
+}
+
+private struct MetricTile: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.caption)
-                .foregroundStyle(ShopifyTheme.textSecondary)
+                .foregroundStyle(ShopifyTheme.subdued)
             Text(value)
-                .font(.title3.bold())
-                .foregroundStyle(ShopifyTheme.textPrimary)
-            Text(footnote)
-                .font(.caption2)
-                .foregroundStyle(ShopifyTheme.textSecondary)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(ShopifyTheme.text)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(width: 118, alignment: .leading)
         .padding(14)
-        .background(ShopifyTheme.card, in: RoundedRectangle(cornerRadius: 12))
+        .background(ShopifyTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(ShopifyTheme.border, lineWidth: 1)
         )
     }
 }
 
-private struct OrderRow: View {
+/// Matches lock-screen / push notification order line exactly.
+private struct ShopifyOrderCell: View {
     let order: DashboardOrder
+    var compact = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Order #\(order.orderNumber)")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(ShopifyTheme.textPrimary)
-                Spacer()
-                Text(DashboardData.relativeTime(order.placedAt))
-                    .font(.caption)
-                    .foregroundStyle(ShopifyTheme.textSecondary)
-            }
-            Text(order.subtitleLine)
-                .font(.subheadline)
-                .foregroundStyle(ShopifyTheme.textSecondary)
-            Text(order.store)
-                .font(.subheadline)
-                .foregroundStyle(ShopifyTheme.textPrimary)
-            HStack(spacing: 8) {
-                StatusPill(text: order.status, color: ShopifyTheme.success)
-                StatusPill(
-                    text: order.fulfillment,
-                    color: order.fulfillment == "Unfulfilled" ? ShopifyTheme.warning : ShopifyTheme.textSecondary
-                )
+        HStack(alignment: .top, spacing: 12) {
+            ShopifyBagMark(size: compact ? 30 : 34)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Order #\(order.orderNumber)")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(ShopifyTheme.text)
+                    Spacer(minLength: 8)
+                    Text(DashboardData.relativeTime(order.placedAt))
+                        .font(.caption)
+                        .foregroundStyle(ShopifyTheme.subdued)
+                }
+                Text(order.subtitleLine)
+                    .font(.subheadline)
+                    .foregroundStyle(ShopifyTheme.subdued)
+                Text(order.store)
+                    .font(.subheadline)
+                    .foregroundStyle(ShopifyTheme.text)
+                if !compact {
+                    HStack(spacing: 6) {
+                        FulfillmentBadge(text: order.status, tone: .paid)
+                        if order.fulfillment == "Unfulfilled" {
+                            FulfillmentBadge(text: "Unfulfilled", tone: .warning)
+                        }
+                    }
+                    .padding(.top, 2)
+                }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, compact ? 6 : 10)
     }
 }
 
-private struct StatusPill: View {
+private struct FulfillmentBadge: View {
+    enum Tone { case paid, warning, neutral }
+
     let text: String
-    let color: Color
+    let tone: Tone
+
+    private var color: Color {
+        switch tone {
+        case .paid: return ShopifyTheme.success
+        case .warning: return ShopifyTheme.warning
+        case .neutral: return ShopifyTheme.subdued
+        }
+    }
 
     var body: some View {
-        Text(text)
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(color.opacity(0.12), in: Capsule())
+        HStack(spacing: 4) {
+            if tone == .paid {
+                Circle().fill(color).frame(width: 6, height: 6)
+            }
+            Text(text)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(color)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(color.opacity(0.1), in: Capsule())
     }
 }
 
-// MARK: - Home
+private struct ShopifySearchBar: View {
+    let placeholder: String
 
-struct DashboardHomeView: View {
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(ShopifyTheme.subdued)
+            Text(placeholder)
+                .font(.subheadline)
+                .foregroundStyle(ShopifyTheme.subdued)
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(ShopifyTheme.surfaceSubdued, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(.horizontal, 16)
+    }
+}
+
+// MARK: - Home (Shopify admin home)
+
+struct ShopifyHomeView: View {
     let orderCounter: Int
+
+    private var orders: [DashboardOrder] {
+        DashboardData.recentOrders(counter: orderCounter, limit: 12)
+    }
 
     private var stats: DashboardStats {
         DashboardData.todayStats(counter: orderCounter)
     }
 
-    private var recentOrders: [DashboardOrder] {
-        Array(DashboardData.recentOrders(counter: orderCounter, limit: 6).prefix(6))
+    private var chartPoints: [CGFloat] {
+        DashboardData.salesChartPoints(counter: orderCounter)
+    }
+
+    private var salesDelta: String {
+        DashboardData.salesChangeLabel(counter: orderCounter)
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    DashboardHeader(title: "Today")
+                VStack(alignment: .leading, spacing: 0) {
+                    ShopifyStoreBar()
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Performance")
-                            .font(.headline)
-                            .foregroundStyle(ShopifyTheme.textPrimary)
-                            .padding(.horizontal)
+                    VStack(alignment: .leading, spacing: 16) {
+                        DateRangePill(label: "Today")
+                            .padding(.top, 4)
 
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                            StatCard(title: "Total sales", value: stats.totalSales, footnote: "Today")
-                            StatCard(title: "Orders", value: "\(stats.orderCount)", footnote: "Online Store")
-                            StatCard(title: "Sessions", value: "\(stats.sessions)", footnote: "Store visitors")
-                            StatCard(title: "Conversion", value: String(format: "%.1f%%", stats.conversionRate), footnote: "Added to cart")
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Total sales")
+                                .font(.subheadline)
+                                .foregroundStyle(ShopifyTheme.subdued)
+                            Text(stats.totalSales)
+                                .font(.system(size: 34, weight: .bold, design: .rounded))
+                                .foregroundStyle(ShopifyTheme.text)
+                            Text(salesDelta)
+                                .font(.caption)
+                                .foregroundStyle(ShopifyTheme.success)
                         }
-                        .padding(.horizontal)
-                    }
 
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
+                        SalesChart(points: chartPoints)
+                            .padding(.vertical, 4)
+
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 10) {
+                                MetricTile(title: "Sessions", value: "\(stats.sessions)")
+                                MetricTile(title: "Orders", value: "\(stats.orderCount)")
+                                MetricTile(title: "Conversion rate", value: String(format: "%.1f%%", stats.conversionRate))
+                                MetricTile(title: "Average order", value: stats.averageOrder)
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Text("Live view")
+                                    .font(.headline)
+                                Spacer()
+                                Text("\(stats.sessions) visitors")
+                                    .font(.caption)
+                                    .foregroundStyle(ShopifyTheme.subdued)
+                            }
+
+                            HStack(spacing: 0) {
+                                liveStat(value: "\(stats.orderCount)", label: "Orders")
+                                Divider().frame(height: 36)
+                                liveStat(value: stats.totalSales, label: "Sales")
+                                Divider().frame(height: 36)
+                                liveStat(value: "Online Store", label: "Top channel")
+                            }
+                            .padding(14)
+                            .background(ShopifyTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(ShopifyTheme.border, lineWidth: 1)
+                            )
+                        }
+
+                        VStack(alignment: .leading, spacing: 8) {
                             Text("Recent orders")
                                 .font(.headline)
-                            Spacer()
-                            Text("View all")
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(ShopifyTheme.green)
-                        }
-                        .foregroundStyle(ShopifyTheme.textPrimary)
-                        .padding(.horizontal)
-
-                        VStack(spacing: 0) {
-                            ForEach(recentOrders) { order in
-                                OrderRow(order: order)
-                                if order.id != recentOrders.last?.id {
-                                    Divider()
+                            VStack(spacing: 0) {
+                                ForEach(Array(orders.prefix(5))) { order in
+                                    ShopifyOrderCell(order: order, compact: true)
+                                    if order.id != orders.prefix(5).last?.id {
+                                        Divider().padding(.leading, 46)
+                                    }
                                 }
                             }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 6)
+                            .background(ShopifyTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(ShopifyTheme.border, lineWidth: 1)
+                            )
                         }
-                        .padding(14)
-                        .background(ShopifyTheme.card, in: RoundedRectangle(cornerRadius: 12))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(ShopifyTheme.border, lineWidth: 1)
-                        )
-                        .padding(.horizontal)
                     }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Store")
-                            .font(.headline)
-                            .foregroundStyle(ShopifyTheme.textPrimary)
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(ShopifySampleData.defaultStore)
-                                    .font(.subheadline.weight(.semibold))
-                                Text("novuskits.myshopify.com")
-                                    .font(.caption)
-                                    .foregroundStyle(ShopifyTheme.textSecondary)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(ShopifyTheme.textSecondary)
-                        }
-                        .padding(14)
-                        .background(ShopifyTheme.card, in: RoundedRectangle(cornerRadius: 12))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(ShopifyTheme.border, lineWidth: 1)
-                        )
-                    }
-                    .padding(.horizontal)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 28)
                 }
-                .padding(.bottom, 24)
             }
-            .background(ShopifyTheme.background)
+            .background(ShopifyTheme.surface)
             .navigationBarHidden(true)
         }
+    }
+
+    private func liveStat(value: String, label: String) -> some View {
+        VStack(spacing: 4) {
+            Text(value)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(ShopifyTheme.text)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(ShopifyTheme.subdued)
+        }
+        .frame(maxWidth: .infinity)
     }
 }
 
 // MARK: - Orders
 
-struct DashboardOrdersView: View {
+struct ShopifyOrdersView: View {
     let orderCounter: Int
-    @State private var filter = "All"
+    @State private var filter = "Open"
+    @State private var selectedOrder: DashboardOrder?
 
-    private let filters = ["All", "Unfulfilled", "Paid", "Fulfilled"]
+    private let filters = ["Open", "Archived", "All"]
 
     private var orders: [DashboardOrder] {
-        let all = DashboardData.recentOrders(counter: orderCounter, limit: 32)
+        let all = DashboardData.recentOrders(counter: orderCounter, limit: 40)
         switch filter {
-        case "Unfulfilled": return all.filter { $0.fulfillment == "Unfulfilled" }
-        case "Paid": return all.filter { $0.status == "Paid" }
-        case "Fulfilled": return all.filter { $0.fulfillment == "Fulfilled" }
+        case "Open": return all.filter { $0.fulfillment == "Unfulfilled" || DashboardData.isRecent($0.placedAt) }
+        case "Archived": return all.filter { $0.fulfillment == "Fulfilled" && !DashboardData.isRecent($0.placedAt) }
         default: return all
         }
     }
@@ -276,78 +423,189 @@ struct DashboardOrdersView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                DashboardHeader(title: "Orders")
-                    .padding(.bottom, 8)
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Orders")
+                        .font(.largeTitle.bold())
+                        .foregroundStyle(ShopifyTheme.text)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
 
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(filters, id: \.self) { item in
-                            Button {
-                                filter = item
-                            } label: {
-                                Text(item)
-                                    .font(.subheadline.weight(.medium))
-                                    .foregroundStyle(filter == item ? .white : ShopifyTheme.textPrimary)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 8)
-                                    .background(
-                                        filter == item ? ShopifyTheme.green : ShopifyTheme.card,
-                                        in: Capsule()
-                                    )
-                                    .overlay(
-                                        Capsule().stroke(ShopifyTheme.border, lineWidth: filter == item ? 0 : 1)
-                                    )
+                    ShopifySearchBar(placeholder: "Search orders")
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(filters, id: \.self) { item in
+                                Button { filter = item } label: {
+                                    Text(item)
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(filter == item ? ShopifyTheme.text : ShopifyTheme.subdued)
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 8)
+                                        .background(
+                                            filter == item ? ShopifyTheme.card : ShopifyTheme.surfaceSubdued,
+                                            in: Capsule()
+                                        )
+                                        .overlay(
+                                            Capsule().stroke(ShopifyTheme.border, lineWidth: filter == item ? 1 : 0)
+                                        )
+                                }
                             }
                         }
+                        .padding(.horizontal, 16)
                     }
-                    .padding(.horizontal)
                 }
-                .padding(.bottom, 12)
+                .padding(.bottom, 8)
+                .background(ShopifyTheme.card)
 
                 List {
                     ForEach(orders) { order in
-                        OrderRow(order: order)
-                            .listRowBackground(ShopifyTheme.card)
+                        Button {
+                            selectedOrder = order
+                        } label: {
+                            ShopifyOrderCell(order: order)
+                        }
+                        .buttonStyle(.plain)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                        .listRowSeparator(.visible)
+                        .listRowBackground(ShopifyTheme.card)
                     }
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
             }
-            .background(ShopifyTheme.background)
-            .navigationBarHidden(true)
+            .background(ShopifyTheme.surface)
+            .sheet(item: $selectedOrder) { order in
+                ShopifyOrderDetailSheet(order: order)
+            }
         }
+    }
+}
+
+// MARK: - Order detail
+
+private struct ShopifyOrderDetailSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let order: DashboardOrder
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Order #\(order.orderNumber)")
+                            .font(.title2.bold())
+                        Text(DashboardData.relativeTime(order.placedAt))
+                            .font(.subheadline)
+                            .foregroundStyle(ShopifyTheme.subdued)
+                    }
+
+                    HStack(spacing: 8) {
+                        FulfillmentBadge(text: order.status, tone: .paid)
+                        FulfillmentBadge(
+                            text: order.fulfillment,
+                            tone: order.fulfillment == "Unfulfilled" ? .warning : .neutral
+                        )
+                    }
+
+                    detailCard(title: "Order") {
+                        Text(order.subtitleLine)
+                        Text(order.store)
+                            .font(.headline)
+                            .padding(.top, 4)
+                    }
+
+                    detailCard(title: "Payment") {
+                        row("Subtotal", order.total)
+                        row("Total", order.total, bold: true)
+                        row("Status", order.status)
+                    }
+
+                    detailCard(title: "Channel") {
+                        row("Source", order.source)
+                        row("Store", order.store)
+                    }
+                }
+                .padding(16)
+            }
+            .background(ShopifyTheme.surface)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .fontWeight(.semibold)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func detailCard(title: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.headline)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(ShopifyTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(ShopifyTheme.border, lineWidth: 1)
+        )
+    }
+
+    private func row(_ label: String, _ value: String, bold: Bool = false) -> some View {
+        HStack {
+            Text(label)
+                .foregroundStyle(ShopifyTheme.subdued)
+            Spacer()
+            Text(value)
+                .fontWeight(bold ? .semibold : .regular)
+        }
+        .font(.subheadline)
     }
 }
 
 // MARK: - Products
 
-struct DashboardProductsView: View {
+struct ShopifyProductsView: View {
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: 0) {
-                DashboardHeader(title: "Products")
-                    .padding(.bottom, 12)
+            VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Products")
+                        .font(.largeTitle.bold())
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                    ShopifySearchBar(placeholder: "Search products")
+                }
+                .padding(.bottom, 8)
+                .background(ShopifyTheme.card)
 
                 List {
                     Section {
                         ForEach(DashboardData.products) { product in
                             HStack(spacing: 12) {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(ShopifyTheme.background)
-                                    .frame(width: 44, height: 44)
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(ShopifyTheme.surfaceSubdued)
+                                    .frame(width: 48, height: 48)
                                     .overlay {
-                                        Image(systemName: "cube.box.fill")
-                                            .foregroundStyle(ShopifyTheme.green)
+                                        Image(systemName: "photo")
+                                            .foregroundStyle(ShopifyTheme.subdued)
                                     }
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(product.name)
                                         .font(.subheadline.weight(.semibold))
-                                    Text("\(product.price) · \(product.inventory) in stock")
+                                        .foregroundStyle(ShopifyTheme.text)
+                                    Text("\(product.inventory) in stock for 1 variant")
                                         .font(.caption)
-                                        .foregroundStyle(ShopifyTheme.textSecondary)
+                                        .foregroundStyle(ShopifyTheme.subdued)
                                 }
                                 Spacer()
-                                StatusPill(text: product.status, color: ShopifyTheme.success)
+                                VStack(alignment: .trailing, spacing: 4) {
+                                    Text(product.price)
+                                        .font(.subheadline.weight(.medium))
+                                    FulfillmentBadge(text: product.status, tone: .paid)
+                                }
                             }
                             .listRowBackground(ShopifyTheme.card)
                         }
@@ -358,132 +616,123 @@ struct DashboardProductsView: View {
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
             }
-            .background(ShopifyTheme.background)
-            .navigationBarHidden(true)
+            .background(ShopifyTheme.surface)
         }
     }
 }
 
-// MARK: - Alerts (notification settings)
+// MARK: - Menu (real Shopify menu + hidden alert settings)
 
-struct DashboardAlertsView: View {
+struct ShopifyMenuView: View {
+    @EnvironmentObject private var store: Store
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    HStack(spacing: 14) {
+                        ShopifyBagMark(size: 44)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(ShopifySampleData.defaultStore)
+                                .font(.headline)
+                            Text("novuskits.myshopify.com")
+                                .font(.caption)
+                                .foregroundStyle(ShopifyTheme.subdued)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                Section("Sales channels") {
+                    menuRow("Online Store", icon: "globe")
+                    menuRow("Shop", icon: "bag")
+                }
+
+                Section("Apps") {
+                    menuRow("Analytics", icon: "chart.line.uptrend.xyaxis")
+                    menuRow("Inbox", icon: "message")
+                }
+
+                Section {
+                    NavigationLink {
+                        ShopifySettingsView()
+                            .environmentObject(store)
+                    } label: {
+                        menuRow("Settings", icon: "gearshape", chevron: false)
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle("Menu")
+        }
+    }
+
+    private func menuRow(_ title: String, icon: String, chevron: Bool = true) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .frame(width: 22)
+                .foregroundStyle(ShopifyTheme.brand)
+            Text(title)
+            if chevron { Spacer() }
+        }
+    }
+}
+
+struct ShopifySettingsView: View {
     @EnvironmentObject private var store: Store
     @State private var showingAdd = false
     @State private var editing: Reminder?
 
     var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 0) {
-                DashboardHeader(title: "Order alerts", showsStore: false)
-                    .padding(.bottom, 12)
+        List {
+            Section("Store") {
+                LabeledContent("Name", value: ShopifySampleData.defaultStore)
+                LabeledContent("Domain", value: "novuskits.myshopify.com")
+            }
 
-                if store.reminders.isEmpty {
-                    VStack(spacing: 12) {
-                        Image(systemName: "bell.badge")
-                            .font(.system(size: 40))
-                            .foregroundStyle(ShopifyTheme.green)
-                        Text("No alerts configured")
-                            .font(.headline)
-                        Text("Add an alert to receive Shopify-style order notifications.")
-                            .font(.subheadline)
-                            .foregroundStyle(ShopifyTheme.textSecondary)
-                            .multilineTextAlignment(.center)
-                        Button("Add alert") { showingAdd = true }
-                            .buttonStyle(.borderedProminent)
-                            .tint(ShopifyTheme.green)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding()
-                } else {
-                    List {
-                        Section("Active alerts") {
-                            ForEach(store.reminders) { reminder in
-                                Button {
-                                    editing = reminder
-                                } label: {
-                                    AlertReminderRow(reminder: reminder)
-                                }
-                                .buttonStyle(.plain)
+            Section("Notifications") {
+                Text("Order push notifications")
+                    .font(.subheadline)
+                    .foregroundStyle(ShopifyTheme.subdued)
+                ForEach(store.reminders) { reminder in
+                    Button { editing = reminder } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Order alerts")
+                                    .foregroundStyle(ShopifyTheme.text)
+                                Text(reminder.isOn ? "On" : "Off")
+                                    .font(.caption)
+                                    .foregroundStyle(ShopifyTheme.subdued)
                             }
-                            .onDelete { offsets in
-                                offsets.map { store.reminders[$0] }.forEach { store.delete($0) }
-                            }
-                        }
-
-                        Section {
-                            Button {
-                                Task {
-                                    guard let reminder = store.reminders.first else { return }
-                                    await NotificationManager.shared.requestAuth()
-                                    await NotificationManager.shared.sendBurstTest(reminder)
-                                }
-                            } label: {
-                                Label("Test burst now", systemImage: "bell.badge")
-                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(ShopifyTheme.subdued)
                         }
                     }
-                    .listStyle(.insetGrouped)
-                    .scrollContentBackground(.hidden)
                 }
+                Button("Add alert") { showingAdd = true }
             }
-            .background(ShopifyTheme.background)
-            .navigationBarHidden(true)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { showingAdd = true } label: {
-                        Image(systemName: "plus")
+
+            Section {
+                Button {
+                    Task {
+                        guard let reminder = store.reminders.first else { return }
+                        await NotificationManager.shared.requestAuth()
+                        await NotificationManager.shared.sendBurstTest(reminder)
                     }
+                } label: {
+                    Label("Test notification burst", systemImage: "bell.badge")
                 }
             }
-            .sheet(isPresented: $showingAdd) {
-                AddReminderView(reminder: Reminder()) { store.upsert($0) }
-            }
-            .sheet(item: $editing) { reminder in
-                AddReminderView(reminder: reminder) { store.upsert($0) }
-            }
         }
-    }
-}
-
-private struct AlertReminderRow: View {
-    @EnvironmentObject private var store: Store
-    let reminder: Reminder
-
-    var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(previewTitle)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                if let previewSubtitle {
-                    Text(previewSubtitle)
-                        .font(.caption)
-                        .foregroundStyle(ShopifyTheme.textSecondary)
-                        .lineLimit(2)
-                }
-                Text(reminder.cadenceText)
-                    .font(.caption2)
-                    .foregroundStyle(ShopifyTheme.textSecondary)
-            }
-            Spacer()
-            Toggle("", isOn: Binding(
-                get: { reminder.isOn },
-                set: { store.setOn(reminder, $0) }
-            ))
-            .labelsHidden()
+        .navigationTitle("Settings")
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showingAdd) {
+            AddReminderView(reminder: Reminder()) { store.upsert($0) }
         }
-        .padding(.vertical, 2)
-    }
-
-    private var previewTitle: String {
-        let counter = CounterStore.current(reminder.id) + 1
-        let raw = reminder.title.isEmpty ? "Order" : reminder.title
-        return NotificationTemplate.render(raw, counter: counter, fireDate: Date().addingTimeInterval(60))
-    }
-
-    private var previewSubtitle: String? {
-        guard !reminder.body.isEmpty else { return nil }
-        let counter = CounterStore.current(reminder.id) + 1
-        return NotificationTemplate.render(reminder.body, counter: counter, fireDate: Date().addingTimeInterval(60))
+        .sheet(item: $editing) { reminder in
+            AddReminderView(reminder: reminder) { store.upsert($0) }
+        }
     }
 }

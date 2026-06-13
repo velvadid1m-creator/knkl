@@ -327,6 +327,27 @@ enum DashboardData {
         formatter.timeStyle = .short
         return formatter.string(from: date)
     }
+
+    static func isRecent(_ date: Date) -> Bool {
+        Date().timeIntervalSince(date) < 86_400
+    }
+
+    static func salesChartPoints(counter: Int) -> [CGFloat] {
+        let orders = recentOrders(counter: counter, limit: 16).reversed()
+        guard !orders.isEmpty else {
+            return [0.08, 0.15, 0.12, 0.22, 0.18, 0.35, 0.28, 0.48, 0.42, 0.62, 0.55, 0.78, 0.72, 0.88, 0.95, 1.0]
+        }
+        var cumulative: CGFloat = 0
+        return orders.map { order in
+            cumulative += CGFloat(order.totalPence)
+            return cumulative
+        }
+    }
+
+    static func salesChangeLabel(counter: Int) -> String {
+        let pct = 8 + (counter % 14)
+        return "↑ \(pct)% from yesterday"
+    }
 }
 
 enum NotificationTemplate {
