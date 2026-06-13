@@ -10,6 +10,11 @@ struct AddReminderView: View {
     @State private var soundOptions = SoundStore.allOptions()
     @State private var showingSoundImporter = false
     @State private var soundImportError: String?
+    @FocusState private var focusedField: MessageField?
+
+    private enum MessageField {
+        case title, body
+    }
 
     init(reminder: Reminder, onSave: @escaping (Reminder) -> Void) {
         _reminder = State(initialValue: reminder)
@@ -30,8 +35,52 @@ struct AddReminderView: View {
             Form {
                 Section("Message") {
                     TextField("Title", text: $reminder.title)
+                        .focused($focusedField, equals: .title)
                     TextField("Text", text: $reminder.body, axis: .vertical)
                         .lineLimit(1...4)
+                        .focused($focusedField, equals: .body)
+                }
+
+                Section {
+                    ForEach(NotificationTemplate.insertable, id: \.token) { item in
+                        Button {
+                            insertToken(item.token)
+                        } label: {
+                            HStack {
+                                Text(item.label)
+                                Spacer()
+                                Text(item.token)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    if reminder.usesDynamicText {
+                        Button("Reset counter to 0", role: .destructive) {
+                            CounterStore.reset(reminder.id)
+                        }
+                    }
+                } header: {
+                    Text("Variables")
+                } footer: {
+                    Text(NotificationTemplate.variableHelp)
+                }
+
+                if reminder.usesDynamicText {
+                    Section("Preview") {
+                        let counter = CounterStore.current(reminder.id) + 1
+                        let sampleDate = Date().addingTimeInterval(60)
+                        LabeledContent("Title") {
+                            Text(NotificationTemplate.render(
+                                reminder.title.isEmpty ? "Reminder" : reminder.title,
+                                counter: counter,
+                                fireDate: sampleDate
+                            ))
+                        }
+                        LabeledContent("Text") {
+                            Text(NotificationTemplate.render(reminder.body, counter: counter, fireDate: sampleDate))
+                        }
+                    }
                 }
 
                 Section {
@@ -74,7 +123,7 @@ struct AddReminderView: View {
                 } header: {
                     Text("How often")
                 } footer: {
-                    Text("Intervals under 1 minute queue as many alerts as iOS allows (up to 64). Re-open PingMe to refill the queue after they run out.")
+                    Text("Use {counter} or {random} in your text for changing values. iOS keeps up to 64 upcoming alerts — reopen PingMe to refill the queue.")
                 }
 
                 Section {
@@ -125,6 +174,15 @@ struct AddReminderView: View {
 
     private func refreshSoundOptions() {
         soundOptions = SoundStore.allOptions()
+    }
+
+    private func insertToken(_ token: String) {
+        switch focusedField {
+        case .title:
+            reminder.title += token
+        case .body, .none:
+            reminder.body += token
+        }
     }
 
     private func handleSoundImport(_ result: Result<[URL], Error>) {

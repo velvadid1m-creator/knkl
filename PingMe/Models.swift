@@ -1,7 +1,5 @@
 import Foundation
 import UserNotifications
-import Intents
-import UIKit
 
 // MARK: - Repeat unit
 
@@ -56,6 +54,97 @@ struct Reminder: Identifiable, Codable, Equatable {
         case .days:    word = every == 1 ? "day" : "days"
         }
         return "Every \(every) \(word)"
+    }
+
+    var usesDynamicText: Bool {
+        NotificationTemplate.isDynamic(title) || NotificationTemplate.isDynamic(body)
+    }
+}
+
+// MARK: - Template variables
+
+enum NotificationTemplate {
+    static let variableHelp = """
+    {counter} — goes up each alert (1, 2, 3…)
+    {random} — random number 1–100
+    {random:10-99} — random number in a range
+    {time} — time the alert fires
+    {date} — date the alert fires
+    """
+
+    static let insertable: [(label: String, token: String)] = [
+        ("Counter", "{counter}"),
+        ("Random", "{random}"),
+        ("Random range", "{random:1-50}"),
+        ("Time", "{time}"),
+        ("Date", "{date}")
+    ]
+
+    static func isDynamic(_ text: String) -> Bool {
+        text.contains("{counter}")
+            || text.contains("{count}")
+            || text.contains("{index}")
+            || text.contains("{random")
+            || text.contains("{time}")
+            || text.contains("{date}")
+    }
+
+    static func render(_ template: String, counter: Int, fireDate: Date) -> String {
+        guard !template.isEmpty else { return template }
+
+        var result = template
+        result = result.replacingOccurrences(of: "{counter}", with: "\(counter)")
+        result = result.replacingOccurrences(of: "{count}", with: "\(counter)")
+        result = result.replacingOccurrences(of: "{index}", with: "\(counter)")
+
+        let timeFormatter = DateFormatter()
+        timeFormatter.timeStyle = .short
+        result = result.replacingOccurrences(of: "{time}", with: timeFormatter.string(from: fireDate))
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .medium
+        result = result.replacingOccurrences(of: "{date}", with: dateFormatter.string(from: fireDate))
+
+        result = replaceRandomTokens(in: result)
+        return result
+    }
+
+    private static func replaceRandomTokens(in text: String) -> String {
+        let pattern = #"\{random(?::(\d+)-(\d+))?\}"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
+
+        var result = text
+        let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed()
+        for match in matches {
+            guard let range = Range(match.range, in: text) else { continue }
+            let low = match.range(at: 1).location != NSNotFound
+                ? (text as NSString).substring(with: match.range(at: 1))
+                : "1"
+            let high = match.range(at: 2).location != NSNotFound
+                ? (text as NSString).substring(with: match.range(at: 2))
+                : "100"
+            let minValue = Int(low) ?? 1
+            let maxValue = max(minValue, Int(high) ?? 100)
+            let value = Int.random(in: minValue...maxValue)
+            result.replaceSubrange(range, with: "\(value)")
+        }
+        return result
+    }
+}
+
+enum CounterStore {
+    private static func key(_ id: UUID) -> String { "counter.\(id.uuidString)" }
+
+    static func current(_ id: UUID) -> Int {
+        UserDefaults.standard.integer(forKey: key(id))
+    }
+
+    static func set(_ id: UUID, _ value: Int) {
+        UserDefaults.standard.set(value, forKey: key(id))
+    }
+
+    static func reset(_ id: UUID) {
+        UserDefaults.standard.removeObject(forKey: key(id))
     }
 }
 
@@ -146,63 +235,6 @@ enum SoundImportError: LocalizedError {
     }
 }
 
-// MARK: - App logo (one image for all notifications)
-
-enum AppLogoStore {
-    private static let fileName = "app-logo.jpg"
-
-    private static var fileURL: URL {
-        let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent(fileName)
-    }
-
-    private static var avatarURL: URL {
-        let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("app-logo.avatar.png")
-    }
-
-    static var hasLogo: Bool {
-        FileManager.default.fileExists(atPath: fileURL.path)
-    }
-
-    static func save(_ data: Data) {
-        try? data.write(to: fileURL)
-        try? FileManager.default.removeItem(at: avatarURL)
-    }
-
-    static func clear() {
-        try? FileManager.default.removeItem(at: fileURL)
-        try? FileManager.default.removeItem(at: avatarURL)
-    }
-
-    static func previewImage() -> UIImage? {
-        guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        return UIImage(data: data)
-    }
-
-    static func notificationAvatarURL() -> URL? {
-        if FileManager.default.fileExists(atPath: avatarURL.path) {
-            return avatarURL
-        }
-        guard let data = try? Data(contentsOf: fileURL),
-              let image = UIImage(data: data) else { return nil }
-
-        let side = min(image.size.width, image.size.height)
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: side, height: side))
-        let square = renderer.image { _ in
-            image.draw(in: CGRect(
-                x: (side - image.size.width) / 2,
-                y: (side - image.size.height) / 2,
-                width: image.size.width,
-                height: image.size.height
-            ))
-        }
-        guard let png = square.pngData() else { return fileURL }
-        try? png.write(to: avatarURL)
-        return avatarURL
-    }
-}
-
 // MARK: - Store
 
 @MainActor
@@ -239,11 +271,8 @@ final class Store: ObservableObject {
 
     func delete(_ reminder: Reminder) {
         reminders.removeAll { $0.id == reminder.id }
+        CounterStore.reset(reminder.id)
         save()
-        reschedule()
-    }
-
-    func refreshNotifications() {
         reschedule()
     }
 
@@ -285,133 +314,86 @@ final class NotificationManager {
         let active = reminders.filter(\.isOn)
         guard !active.isEmpty else { return }
 
-        let slow = active.filter { $0.intervalSeconds >= 60 }
-        let fast = active.filter { $0.intervalSeconds < 60 }
-        let burstSlots = max(0, maxPending - slow.count)
+        let staticReminders = active.filter { !$0.usesDynamicText && $0.intervalSeconds >= 60 }
+        let sequenced = active.filter { $0.usesDynamicText || $0.intervalSeconds < 60 }
+        let sequenceSlots = max(0, maxPending - staticReminders.count)
 
-        for reminder in slow {
+        for reminder in staticReminders {
             await scheduleRepeating(reminder)
         }
 
-        guard burstSlots > 0, !fast.isEmpty else { return }
+        guard sequenceSlots > 0, !sequenced.isEmpty else { return }
 
-        let perReminder = max(1, burstSlots / fast.count)
-        for reminder in fast {
-            await scheduleBurst(reminder, count: perReminder)
+        let perReminder = max(1, sequenceSlots / sequenced.count)
+        for reminder in sequenced {
+            await scheduleSequence(reminder, count: perReminder)
         }
     }
 
     private func scheduleRepeating(_ reminder: Reminder) async {
-        let content = await makeContent(for: reminder, fallbackTitle: "Reminder")
+        let content = makeContent(
+            for: reminder,
+            fallbackTitle: "Reminder",
+            counter: CounterStore.current(reminder.id) + 1,
+            fireDate: Date().addingTimeInterval(reminder.intervalSeconds)
+        )
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: reminder.intervalSeconds, repeats: true)
         let request = UNNotificationRequest(identifier: reminder.id.uuidString, content: content, trigger: trigger)
         try? await center.add(request)
     }
 
-    /// iOS won't repeat faster than 60s, so queue many one-shot alerts instead.
-    private func scheduleBurst(_ reminder: Reminder, count: Int) async {
+    /// Schedules separate alerts so each one can have its own counter/random text.
+    private func scheduleSequence(_ reminder: Reminder, count: Int) async {
         let interval = max(1, reminder.intervalSeconds)
-        let content = await makeContent(for: reminder, fallbackTitle: "Reminder")
+        let baseCounter = CounterStore.current(reminder.id)
 
         for index in 1...count {
+            let counter = baseCounter + index
+            let fireDate = Date().addingTimeInterval(interval * Double(index))
+            let content = makeContent(
+                for: reminder,
+                fallbackTitle: "Reminder",
+                counter: counter,
+                fireDate: fireDate
+            )
             let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval * Double(index), repeats: false)
             let identifier = "\(reminder.id.uuidString)-\(index)"
             let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
             try? await center.add(request)
         }
+
+        CounterStore.set(reminder.id, baseCounter + count)
     }
 
     /// Fires once, ~2 seconds out, so you can preview a notification.
     func sendTest(_ reminder: Reminder) async {
-        var content = await makeContent(for: reminder, fallbackTitle: "Test")
+        let counter = CounterStore.current(reminder.id) + 1
+        let content = makeContent(
+            for: reminder,
+            fallbackTitle: "Test",
+            counter: counter,
+            fireDate: Date().addingTimeInterval(2)
+        )
         if content.body.isEmpty { content.body = "This is a test" }
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 2, repeats: false)
         let request = UNNotificationRequest(identifier: "test-" + UUID().uuidString, content: content, trigger: trigger)
         try? await center.add(request)
     }
 
-    private func makeContent(for reminder: Reminder, fallbackTitle: String) async -> UNMutableNotificationContent {
+    private func makeContent(
+        for reminder: Reminder,
+        fallbackTitle: String,
+        counter: Int,
+        fireDate: Date
+    ) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
-        let title = reminder.title.isEmpty ? fallbackTitle : reminder.title
-        content.title = title
-        content.body = reminder.body
+        let rawTitle = reminder.title.isEmpty ? fallbackTitle : reminder.title
+        content.title = NotificationTemplate.render(rawTitle, counter: counter, fireDate: fireDate)
+        content.body = NotificationTemplate.render(reminder.body, counter: counter, fireDate: fireDate)
         content.threadIdentifier = reminder.id.uuidString
         content.sound = reminder.soundName.isEmpty
             ? .default
             : UNNotificationSound(named: UNNotificationSoundName(reminder.soundName))
-
-        guard let imageURL = AppLogoStore.notificationAvatarURL() else { return content }
-
-        return await applyCommunicationAvatar(
-            to: content,
-            imageURL: imageURL,
-            displayName: "PingMe",
-            conversationID: "pingme-logo"
-        )
-    }
-
-    /// Shows the picked image as the large left-side notification avatar (Messages-style).
-    private func applyCommunicationAvatar(
-        to content: UNMutableNotificationContent,
-        imageURL: URL,
-        displayName: String,
-        conversationID: String
-    ) async -> UNMutableNotificationContent {
-        let avatarURL = imageURL
-        let handle = INPersonHandle(value: conversationID, type: .unknown)
-        let sender = INPerson(
-            personHandle: handle,
-            nameComponents: nil,
-            displayName: displayName,
-            image: INImage(url: avatarURL),
-            contactIdentifier: nil,
-            customIdentifier: conversationID,
-            isMe: false,
-            suggestionType: .none
-        )
-
-        let intent = INSendMessageIntent(
-            recipients: nil,
-            outgoingMessageType: .outgoingMessageText,
-            content: content.body,
-            speakableGroupName: nil,
-            conversationIdentifier: conversationID,
-            serviceName: "PingMe",
-            sender: sender,
-            attachments: nil
-        )
-
-        let interaction = INInteraction(intent: intent, response: nil)
-        interaction.direction = .incoming
-
-        do {
-            try await interaction.donate()
-            let updated = try content.updating(from: intent)
-            if let mutable = updated.mutableCopy() as? UNMutableNotificationContent {
-                mutable.sound = content.sound
-                mutable.threadIdentifier = content.threadIdentifier
-                return mutable
-            }
-        } catch {
-            // Fall through to attachment preview if communication style isn't available.
-        }
-
-        return attachImageFallback(to: content, imageURL: avatarURL, identifier: conversationID)
-    }
-
-    private func attachImageFallback(
-        to content: UNMutableNotificationContent,
-        imageURL: URL,
-        identifier: String
-    ) -> UNMutableNotificationContent {
-        let rect: [String: NSNumber] = ["X": 0, "Y": 0, "Width": 1, "Height": 1]
-        if let attachment = try? UNNotificationAttachment(
-            identifier: identifier,
-            url: imageURL,
-            options: [UNNotificationAttachmentOptionsThumbnailClippingRectKey: rect]
-        ) {
-            content.attachments = [attachment]
-        }
         return content
     }
 }
