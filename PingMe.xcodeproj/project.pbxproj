@@ -204,7 +204,6 @@
 		1A000000000000000000000D /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = "AppIcon-Blue AppIcon-Green AppIcon-Purple AppIcon-Orange AppIcon-Dark AppIcon-Custom";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = PingMe/PingMe.entitlements;
 				CODE_SIGN_STYLE = Automatic;
@@ -232,7 +231,6 @@
 		1A000000000000000000000E /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES = "AppIcon-Blue AppIcon-Green AppIcon-Purple AppIcon-Orange AppIcon-Dark AppIcon-Custom";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = PingMe/PingMe.entitlements;
 				CODE_SIGN_STYLE = Automatic;

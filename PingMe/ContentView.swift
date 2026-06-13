@@ -77,6 +77,12 @@ private struct ReminderRow: View {
                 Text(previewTitle)
                     .font(.headline)
                     .lineLimit(2)
+                if let previewSubtitle {
+                    Text(previewSubtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                }
                 Text(reminder.cadenceText)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -94,11 +100,24 @@ private struct ReminderRow: View {
 
     private var previewTitle: String {
         let counter = CounterStore.current(reminder.id) + 1
-        let text = NotificationTemplate.render(
-            reminder.body.isEmpty ? "Order alert" : reminder.body,
+        let sampleDate = Date().addingTimeInterval(60)
+        if reminder.title.isEmpty {
+            return NotificationTemplate.render(
+                reminder.body.isEmpty ? "Order alert" : reminder.body,
+                counter: counter,
+                fireDate: sampleDate
+            )
+        }
+        return NotificationTemplate.render(reminder.title, counter: counter, fireDate: sampleDate)
+    }
+
+    private var previewSubtitle: String? {
+        guard !reminder.title.isEmpty, !reminder.body.isEmpty else { return nil }
+        let counter = CounterStore.current(reminder.id) + 1
+        return NotificationTemplate.render(
+            reminder.body,
             counter: counter,
             fireDate: Date().addingTimeInterval(60)
         )
-        return text
     }
 }

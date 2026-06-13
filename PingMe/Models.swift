@@ -60,12 +60,12 @@ struct Reminder: Identifiable, Codable, Equatable {
         NotificationTemplate.isDynamic(title) || NotificationTemplate.isDynamic(body)
     }
 
-    /// Matches real Shopify order notifications.
+    /// UK Shopify format — Order # title, price + items + source, store on next line.
     static let shopifyOrder = Reminder(
-        title: "",
-        body: "{store} has a new order for {items_phrase} totaling {total} from {source}.",
+        title: "Order #{order}",
+        body: "{total}, {items_phrase} from {source} ·\n{store}",
         soundName: "ding.wav",
-        every: 3,
+        every: 5,
         unit: .minutes,
         isOn: true
     )
@@ -74,59 +74,73 @@ struct Reminder: Identifiable, Codable, Equatable {
 // MARK: - Template variables
 
 enum ShopifySampleData {
-    static let stores = [
-        "HoH Fashion", "HoH Fashion", "HoH Fashion",
-        "Main Street Boutique", "Urban Threads", "Glow Skincare"
-    ]
+    static let defaultStore = "Novus Kits"
+    private static let orderNumberBase = 1134
 
     static let sources = [
-        "Online Store", "Online Store", "Online Store",
-        "Facebook & Instagram", "TikTok Shop", "Shop app", "Google"
+        "Online Store", "Online Store", "Online Store", "Online Store",
+        "Online Store", "Facebook & Instagram"
     ]
 
+    /// Typical Novus Kits order totals — mostly £38–£56.
+    private static let realisticTotalsPence: [Int] = [
+        3849, 3899, 3949, 3999, 4049, 4099, 4149, 4199, 4249, 4299, 4349, 4399,
+        4449, 4499, 4500, 4549, 4599, 4609, 4649, 4664, 4699, 4749, 4799, 4849,
+        4899, 4949, 4999, 5049, 5099, 5199, 5249, 5299, 5399, 5449, 5499, 5599
+    ]
+
+    static func orderNumber(counter: Int) -> String {
+        "\(orderNumberBase + counter)"
+    }
+
     static func randomStore() -> String {
-        stores.randomElement() ?? "HoH Fashion"
+        defaultStore
     }
 
     static func randomSource() -> String {
         sources.randomElement() ?? "Online Store"
     }
 
+    /// Real orders: mostly 1–2 items, no product names shown.
     static func randomItemCountPhrase() -> String {
-        let count = Int.random(in: 1...4)
-        return count == 1 ? "1 item" : "\(count) items"
+        let count = Int.random(in: 1...100) <= 48 ? 1 : 2
+        return count == 1 ? "1 item" : "2 items"
     }
 
-    static func randomTotal(minDollars: Int = 8, maxDollars: Int = 250) -> String {
-        let cents = Int.random(in: minDollars * 100...maxDollars * 100)
-        let dollars = cents / 100
-        let remainder = cents % 100
-        return String(format: "$%d.%02d", dollars, remainder)
+    static func randomTotalGBP(minPounds: Int = 38, maxPounds: Int = 56) -> String {
+        let minPence = minPounds * 100
+        let maxPence = maxPounds * 100
+        let pool = realisticTotalsPence.filter { $0 >= minPence && $0 <= maxPence }
+        let pence = pool.randomElement() ?? 4500
+        return formatGBP(pence)
+    }
+
+    private static func formatGBP(_ pence: Int) -> String {
+        String(format: "£%d.%02d", pence / 100, pence % 100)
     }
 }
 
 enum NotificationTemplate {
     static let variableHelp = """
-    Shopify style (like the real app):
-    {store} — store name (default HoH Fashion)
-    {items_phrase} — "1 item" or "2 items"
-    {total} — price like $70.49
-    {source} — Online Store, Facebook & Instagram, etc.
+    UK Shopify format:
+    {order} — Order #1143, #1144…
+    {total} — £45.00, £46.64…
+    {items_phrase} — 1 item or 2 items
+    {source} — Online Store
+    {store} — Novus Kits (on its own line)
     """
 
     static let insertable: [(label: String, token: String)] = [
-        ("Store", "{store}"),
-        ("Items", "{items_phrase}"),
+        ("Order #", "{order}"),
         ("Total", "{total}"),
+        ("Items", "{items_phrase}"),
         ("Source", "{source}"),
-        ("Total range", "{total:10-80}"),
-        ("Counter", "{counter}"),
-        ("Random", "{random}")
+        ("Store", "{store}")
     ]
 
     private static let dynamicMarkers = [
         "{counter}", "{count}", "{index}", "{random",
-        "{time}", "{date}", "{store}", "{items_phrase}",
+        "{time}", "{date}", "{order", "{store}", "{items_phrase}",
         "{item_count}", "{source}", "{total", "{amount"
     ]
 
@@ -142,6 +156,12 @@ enum NotificationTemplate {
         result = result.replacingOccurrences(of: "{count}", with: "\(counter)")
         result = result.replacingOccurrences(of: "{index}", with: "\(counter)")
 
+        result = replaceToken("{order}", in: result) { _ in
+            ShopifySampleData.orderNumber(counter: counter)
+        }
+        result = replaceToken("{order_number}", in: result) { _ in
+            ShopifySampleData.orderNumber(counter: counter)
+        }
         result = replaceToken("{store}", in: result) { _ in
             ShopifySampleData.randomStore()
         }
@@ -191,13 +211,13 @@ enum NotificationTemplate {
             guard let range = Range(match.range, in: text) else { continue }
             let low = match.range(at: 1).location != NSNotFound
                 ? (text as NSString).substring(with: match.range(at: 1))
-                : "12"
+                : "38"
             let high = match.range(at: 2).location != NSNotFound
                 ? (text as NSString).substring(with: match.range(at: 2))
-                : "349"
-            let minValue = Int(low) ?? 12
-            let maxValue = max(minValue, Int(high) ?? 349)
-            let value = ShopifySampleData.randomTotal(minDollars: minValue, maxDollars: maxValue)
+                : "56"
+            let minValue = Int(low) ?? 38
+            let maxValue = max(minValue, Int(high) ?? 56)
+            let value = ShopifySampleData.randomTotalGBP(minPounds: minValue, maxPounds: maxValue)
             result.replaceSubrange(range, with: value)
         }
         return result
@@ -336,28 +356,46 @@ final class Store: ObservableObject {
     @Published var reminders: [Reminder] = []
 
     private let key = "reminders.v1"
-    private let shopifySeedKey = "seeded.shopify.v2"
+    private let shopifySeedKey = "seeded.shopify.v3"
 
     init() {
         load()
+        upgradeShopifyTemplates()
         seedShopifySampleIfNeeded()
+    }
+
+    private func upgradeShopifyTemplates() {
+        var changed = false
+        for index in reminders.indices {
+            let old = reminders[index]
+            let isOldFormat = old.body.contains("has a new order for")
+                || (old.title.isEmpty && old.body.contains("totaling"))
+            guard isOldFormat else { continue }
+
+            var updated = Reminder.shopifyOrder
+            updated.id = old.id
+            updated.every = old.every
+            updated.unit = old.unit
+            updated.isOn = old.isOn
+            updated.soundName = old.soundName
+            reminders[index] = updated
+            changed = true
+        }
+        if changed {
+            save()
+            reschedule()
+        }
     }
 
     private func seedShopifySampleIfNeeded() {
         guard !UserDefaults.standard.bool(forKey: shopifySeedKey) else { return }
         UserDefaults.standard.set(true, forKey: shopifySeedKey)
 
-        if let idx = reminders.firstIndex(where: {
-            $0.body.contains("{customer}") || $0.title.contains("#{order}")
-        }) {
-            var updated = Reminder.shopifyOrder
-            updated.id = reminders[idx].id
-            reminders[idx] = updated
-        } else {
+        if reminders.isEmpty {
             reminders.insert(Reminder.shopifyOrder, at: 0)
+            save()
+            reschedule()
         }
-        save()
-        reschedule()
     }
 
     func load() {

@@ -9,6 +9,7 @@ struct PingMeApp: App {
             ContentView()
                 .environmentObject(store)
                 .task {
+                    await AppIconManager.ensureShopifyIcon()
                     await NotificationManager.shared.requestAuth()
                     await NotificationManager.shared.reschedule(store.reminders)
                 }
