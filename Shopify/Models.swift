@@ -204,6 +204,125 @@ enum ShopifySampleData {
     static func formatGBP(_ pence: Int) -> String {
         String(format: "£%d.%02d", pence / 100, pence % 100)
     }
+
+    /// Stable order data for dashboard rows — same counter always shows the same order.
+    static func seededOrder(counter: Int) -> SampleOrder {
+        let count = [1, 2, 2, 1, 2, 1, 2, 3, 1, 2][abs(counter) % 10]
+        var totalPence = 0
+        for index in 0..<count {
+            let seed = abs(counter) &* 31 &+ index &* 17
+            let pounds = 30 + (seed % 51)
+            let cents = [0, 0, 9, 49, 53, 64, 99][seed % 7]
+            totalPence += pounds * 100 + cents
+        }
+        return SampleOrder(itemCount: count, totalPence: totalPence)
+    }
+}
+
+// MARK: - Dashboard data
+
+struct DashboardOrder: Identifiable {
+    let id: Int
+    let orderNumber: String
+    let total: String
+    let totalPence: Int
+    let itemsPhrase: String
+    let source: String
+    let store: String
+    let placedAt: Date
+    let status: String
+    let fulfillment: String
+
+    var subtitleLine: String {
+        "\(total), \(itemsPhrase) from \(source) •"
+    }
+}
+
+struct DashboardStats {
+    let totalSalesPence: Int
+    let orderCount: Int
+    let sessions: Int
+    let conversionRate: Double
+
+    var totalSales: String { ShopifySampleData.formatGBP(totalSalesPence) }
+    var averageOrder: String {
+        guard orderCount > 0 else { return "£0.00" }
+        return ShopifySampleData.formatGBP(totalSalesPence / orderCount)
+    }
+}
+
+struct DashboardProduct: Identifiable {
+    let id: String
+    let name: String
+    let price: String
+    let inventory: Int
+    let status: String
+}
+
+enum DashboardData {
+    static let products: [DashboardProduct] = [
+        DashboardProduct(id: "NK-001", name: "Starter Kit", price: "£45.00", inventory: 128, status: "Active"),
+        DashboardProduct(id: "NK-002", name: "Pro Bundle", price: "£72.00", inventory: 64, status: "Active"),
+        DashboardProduct(id: "NK-003", name: "Refill Pack", price: "£38.00", inventory: 210, status: "Active"),
+        DashboardProduct(id: "NK-004", name: "Limited Edition Kit", price: "£79.99", inventory: 12, status: "Active"),
+        DashboardProduct(id: "NK-005", name: "Gift Set", price: "£56.50", inventory: 45, status: "Active"),
+    ]
+
+    static func recentOrders(counter: Int, limit: Int = 24) -> [DashboardOrder] {
+        let highest = max(1, counter)
+        let lowest = max(1, highest - limit + 1)
+        return (lowest...highest).reversed().map { makeOrder(counter: $0) }
+    }
+
+    static func todayStats(counter: Int) -> DashboardStats {
+        let orders = recentOrders(counter: counter).filter { Calendar.current.isDateInToday($0.placedAt) }
+        let sales = orders.reduce(0) { $0 + $1.totalPence }
+        let sessions = max(orders.count * 18 + 42, 64)
+        let conversion = orders.isEmpty ? 2.4 : min(6.8, Double(orders.count) / Double(sessions) * 100 + 1.8)
+        return DashboardStats(
+            totalSalesPence: sales,
+            orderCount: orders.count,
+            sessions: sessions,
+            conversionRate: conversion
+        )
+    }
+
+    static func makeOrder(counter: Int) -> DashboardOrder {
+        let sample = ShopifySampleData.seededOrder(counter: counter)
+        return DashboardOrder(
+            id: counter,
+            orderNumber: ShopifySampleData.orderNumber(counter: counter),
+            total: sample.totalGBP,
+            totalPence: sample.totalPence,
+            itemsPhrase: sample.itemsPhrase,
+            source: "Online Store",
+            store: ShopifySampleData.defaultStore,
+            placedAt: placedAt(counter: counter),
+            status: "Paid",
+            fulfillment: counter % 5 == 0 ? "Unfulfilled" : "Fulfilled"
+        )
+    }
+
+    private static func placedAt(counter: Int) -> Date {
+        let offsets = [8, 22, 41, 67, 128, 245, 380, 520, 890, 1440, 2880, 4320]
+        let minutes = offsets[abs(counter) % offsets.count] + (abs(counter) % 17)
+        return Date().addingTimeInterval(-Double(minutes * 60))
+    }
+
+    static func relativeTime(_ date: Date) -> String {
+        let seconds = Int(Date().timeIntervalSince(date))
+        if seconds < 60 { return "Just now" }
+        if seconds < 3600 { return "\(seconds / 60)m ago" }
+        if seconds < 86400 { return "\(seconds / 3600)h ago" }
+        if Calendar.current.isDateInYesterday(date) {
+            let formatter = DateFormatter()
+            formatter.timeStyle = .short
+            return "Yesterday, \(formatter.string(from: date))"
+        }
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
 }
 
 enum NotificationTemplate {

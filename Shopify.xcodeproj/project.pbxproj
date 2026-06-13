@@ -17,6 +17,7 @@
 		1C0000000000000000000008 /* bell.wav in Resources */ = {isa = PBXBuildFile; fileRef = 1B0000000000000000000008 /* bell.wav */; };
 		1C0000000000000000000009 /* alarm.wav in Resources */ = {isa = PBXBuildFile; fileRef = 1B0000000000000000000009 /* alarm.wav */; };
 		1C000000000000000000000A /* AppIconManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B000000000000000000000B /* AppIconManager.swift */; };
+		1C000000000000000000000B /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B000000000000000000000C /* DashboardView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -32,6 +33,7 @@
 		1B0000000000000000000009 /* alarm.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = alarm.wav; sourceTree = "<group>"; };
 		1B000000000000000000000A /* Shopify.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Shopify.entitlements; sourceTree = "<group>"; };
 		1B000000000000000000000B /* AppIconManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIconManager.swift; sourceTree = "<group>"; };
+		1B000000000000000000000C /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -61,6 +63,7 @@
 				1B0000000000000000000003 /* AddReminderView.swift */,
 				1B0000000000000000000004 /* Models.swift */,
 				1B000000000000000000000B /* AppIconManager.swift */,
+				1B000000000000000000000C /* DashboardView.swift */,
 				1B0000000000000000000006 /* chime.wav */,
 				1B0000000000000000000007 /* ding.wav */,
 				1B0000000000000000000008 /* bell.wav */,
@@ -157,6 +160,7 @@
 				1C0000000000000000000003 /* AddReminderView.swift in Sources */,
 				1C0000000000000000000004 /* Models.swift in Sources */,
 				1C000000000000000000000A /* AppIconManager.swift in Sources */,
+				1C000000000000000000000B /* DashboardView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
