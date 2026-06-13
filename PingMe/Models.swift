@@ -59,34 +59,99 @@ struct Reminder: Identifiable, Codable, Equatable {
     var usesDynamicText: Bool {
         NotificationTemplate.isDynamic(title) || NotificationTemplate.isDynamic(body)
     }
+
+    /// Pre-built Shopify-style new order alert.
+    static let shopifyOrder = Reminder(
+        title: "New order #{order}",
+        body: "{customer} ordered {item} — {total}",
+        soundName: "ding.wav",
+        every: 5,
+        unit: .minutes,
+        isOn: true
+    )
 }
 
 // MARK: - Template variables
 
+enum ShopifySampleData {
+    static let customers = [
+        "Jordan Smith", "Alex Rivera", "Sam Chen", "Taylor Brooks", "Morgan Lee",
+        "Casey Nguyen", "Riley Patel", "Jamie Wilson", "Avery Brown", "Quinn Davis",
+        "Drew Martinez", "Skyler Kim", "Reese Johnson", "Blake Anderson", "Emery White"
+    ]
+
+    static let products = [
+        "Classic Hoodie", "Wireless Earbuds", "Ceramic Mug", "Canvas Tote Bag",
+        "Running Shoes", "Scented Candle", "Phone Case", "Sticker Pack",
+        "Minimal Watch", "Linen Shirt", "Gym Bottle", "Desk Lamp",
+        "Leather Wallet", "Beanie Hat", "Protein Bars (12-pack)"
+    ]
+
+    static func orderNumber(counter: Int) -> String {
+        "\(1000 + counter)"
+    }
+
+    static func randomCustomer() -> String {
+        customers.randomElement() ?? "Customer"
+    }
+
+    static func randomItem() -> String {
+        let product = products.randomElement() ?? "Item"
+        let qty = Int.random(in: 1...3)
+        return qty == 1 ? product : "\(product) × \(qty)"
+    }
+
+    static func randomItems() -> String {
+        let count = Int.random(in: 2...3)
+        let picks = (0..<count).map { _ in randomItem() }
+        return picks.joined(separator: ", ")
+    }
+
+    static func randomTotal(minDollars: Int = 12, maxDollars: Int = 349) -> String {
+        let cents = Int.random(in: minDollars * 100...maxDollars * 100)
+        let dollars = cents / 100
+        let remainder = cents % 100
+        return String(format: "$%d.%02d", dollars, remainder)
+    }
+}
+
 enum NotificationTemplate {
     static let variableHelp = """
-    {counter} — goes up each alert (1, 2, 3…)
-    {random} — random number 1–100
-    {random:10-99} — random number in a range
-    {time} — time the alert fires
-    {date} — date the alert fires
+    Shopify style:
+    {order} — order # going up (1001, 1002…)
+    {customer} — random buyer name
+    {item} — random product (sometimes ×2)
+    {items} — 2–3 random products
+    {total} — random price like $47.99
+    {total:20-150} — price in a range
+
+    Other:
+    {counter} — plain number 1, 2, 3…
+    {random} / {random:1-50} — random number
+    {time} / {date}
     """
 
     static let insertable: [(label: String, token: String)] = [
+        ("Order #", "{order}"),
+        ("Customer", "{customer}"),
+        ("Item", "{item}"),
+        ("Items", "{items}"),
+        ("Total", "{total}"),
+        ("Total range", "{total:20-150}"),
         ("Counter", "{counter}"),
         ("Random", "{random}"),
-        ("Random range", "{random:1-50}"),
         ("Time", "{time}"),
         ("Date", "{date}")
     ]
 
+    private static let dynamicMarkers = [
+        "{counter}", "{count}", "{index}", "{random",
+        "{time}", "{date}", "{order", "{customer}",
+        "{item}", "{items}", "{total", "{amount"
+    ]
+
     static func isDynamic(_ text: String) -> Bool {
-        text.contains("{counter}")
-            || text.contains("{count}")
-            || text.contains("{index}")
-            || text.contains("{random")
-            || text.contains("{time}")
-            || text.contains("{date}")
+        dynamicMarkers.contains { text.contains($0) }
     }
 
     static func render(_ template: String, counter: Int, fireDate: Date) -> String {
@@ -97,6 +162,25 @@ enum NotificationTemplate {
         result = result.replacingOccurrences(of: "{count}", with: "\(counter)")
         result = result.replacingOccurrences(of: "{index}", with: "\(counter)")
 
+        result = replaceToken("{order}", in: result) { _ in
+            ShopifySampleData.orderNumber(counter: counter)
+        }
+        result = replaceToken("{order_number}", in: result) { _ in
+            ShopifySampleData.orderNumber(counter: counter)
+        }
+        result = replaceToken("{customer}", in: result) { _ in
+            ShopifySampleData.randomCustomer()
+        }
+        result = replaceToken("{item}", in: result) { _ in
+            ShopifySampleData.randomItem()
+        }
+        result = replaceToken("{product}", in: result) { _ in
+            ShopifySampleData.randomItem()
+        }
+        result = replaceToken("{items}", in: result) { _ in
+            ShopifySampleData.randomItems()
+        }
+
         let timeFormatter = DateFormatter()
         timeFormatter.timeStyle = .short
         result = result.replacingOccurrences(of: "{time}", with: timeFormatter.string(from: fireDate))
@@ -105,7 +189,42 @@ enum NotificationTemplate {
         dateFormatter.dateStyle = .medium
         result = result.replacingOccurrences(of: "{date}", with: dateFormatter.string(from: fireDate))
 
+        result = replaceTotalTokens(in: result)
         result = replaceRandomTokens(in: result)
+        return result
+    }
+
+    private static func replaceToken(
+        _ token: String,
+        in text: String,
+        value: (Range<String.Index>) -> String
+    ) -> String {
+        var result = text
+        while let range = result.range(of: token) {
+            result.replaceSubrange(range, with: value(range))
+        }
+        return result
+    }
+
+    private static func replaceTotalTokens(in text: String) -> String {
+        let pattern = #"\{(?:total|amount)(?::(\d+)-(\d+))?\}"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
+
+        var result = text
+        let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed()
+        for match in matches {
+            guard let range = Range(match.range, in: text) else { continue }
+            let low = match.range(at: 1).location != NSNotFound
+                ? (text as NSString).substring(with: match.range(at: 1))
+                : "12"
+            let high = match.range(at: 2).location != NSNotFound
+                ? (text as NSString).substring(with: match.range(at: 2))
+                : "349"
+            let minValue = Int(low) ?? 12
+            let maxValue = max(minValue, Int(high) ?? 349)
+            let value = ShopifySampleData.randomTotal(minDollars: minValue, maxDollars: maxValue)
+            result.replaceSubrange(range, with: value)
+        }
         return result
     }
 
@@ -242,9 +361,19 @@ final class Store: ObservableObject {
     @Published var reminders: [Reminder] = []
 
     private let key = "reminders.v1"
+    private let shopifySeedKey = "seeded.shopify.v1"
 
     init() {
         load()
+        seedShopifySampleIfNeeded()
+    }
+
+    private func seedShopifySampleIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: shopifySeedKey) else { return }
+        UserDefaults.standard.set(true, forKey: shopifySeedKey)
+        reminders.append(Reminder.shopifyOrder)
+        save()
+        reschedule()
     }
 
     func load() {

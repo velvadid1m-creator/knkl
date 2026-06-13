@@ -42,6 +42,14 @@ struct AddReminderView: View {
                 }
 
                 Section {
+                    Button {
+                        let id = reminder.id
+                        reminder = Reminder.shopifyOrder
+                        reminder.id = id
+                    } label: {
+                        Label("Use Shopify order template", systemImage: "bag")
+                    }
+
                     ForEach(NotificationTemplate.insertable, id: \.token) { item in
                         Button {
                             insertToken(item.token)
@@ -56,7 +64,7 @@ struct AddReminderView: View {
                         }
                     }
                     if reminder.usesDynamicText {
-                        Button("Reset counter to 0", role: .destructive) {
+                        Button("Reset order # to 1001", role: .destructive) {
                             CounterStore.reset(reminder.id)
                         }
                     }
@@ -123,7 +131,7 @@ struct AddReminderView: View {
                 } header: {
                     Text("How often")
                 } footer: {
-                    Text("Use {counter} or {random} in your text for changing values. iOS keeps up to 64 upcoming alerts — reopen PingMe to refill the queue.")
+                    Text("Shopify-style variables change each alert. iOS keeps up to 64 upcoming — reopen PingMe to refill.")
                 }
 
                 Section {
