@@ -113,7 +113,7 @@ struct AddReminderView: View {
                 } header: {
                     Text("Sound")
                 } footer: {
-                    Text("Import .wav, .aiff, .caf, .m4a, or .mp3 files under 30 seconds. Custom sounds are copied into the app so they still play when PingMe is closed.")
+                    Text("Import .wav, .aiff, .caf, .m4a, or .mp3 files under 30 seconds. Custom sounds are copied into the app so they still play when Shopify is closed.")
                 }
 
                 Section {
