@@ -29,7 +29,6 @@ struct AddReminderView: View {
 
     private var burstPreviewText: String {
         let (lo, hi) = reminder.normalizedBurstSeconds
-        let gap = lo == hi ? "\(lo)s" : "\(lo)–\(hi)s"
         let span = lo == hi
             ? max(0, (reminder.burstCount - 1) * lo)
             : (reminder.burstCount - 1) * hi
@@ -85,6 +84,8 @@ struct AddReminderView: View {
         case ..<3600: return 30
         default: return 300
         }
+    }
+
     private var burstEveryRange: ClosedRange<Int> {
         switch reminder.burstEveryUnit {
         case .seconds: return 5...600
