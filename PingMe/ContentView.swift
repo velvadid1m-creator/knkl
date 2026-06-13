@@ -6,142 +6,146 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var store: Store
     @State private var showingAdd = false
-    @State private var showingLogo = false
     @State private var editing: Reminder?
+    @State private var logoImage: UIImage? = AppLogoStore.previewImage()
 
     var body: some View {
         NavigationStack {
-            content
-                .navigationTitle("PingMe")
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button {
-                            showingLogo = true
-                        } label: {
-                            Image(systemName: "photo.circle")
+            List {
+                logoSection
+
+                if store.reminders.isEmpty {
+                    Section {
+                        VStack(spacing: 10) {
+                            Image(systemName: "bell.slash")
+                                .font(.system(size: 36))
+                                .foregroundStyle(.secondary)
+                            Text("No notifications yet")
+                                .font(.headline)
+                            Text("Tap + to create one. Every alert will use your app logo above.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
+                        .listRowBackground(Color.clear)
+                    }
+                } else {
+                    Section("Notifications") {
+                        ForEach(store.reminders) { reminder in
+                            Button {
+                                editing = reminder
+                            } label: {
+                                ReminderRow(reminder: reminder)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .onDelete { offsets in
+                            let toDelete = offsets.map { store.reminders[$0] }
+                            toDelete.forEach { store.delete($0) }
                         }
                     }
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button {
-                            showingAdd = true
-                        } label: {
-                            Image(systemName: "plus")
-                        }
+                }
+            }
+            .navigationTitle("PingMe")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        showingAdd = true
+                    } label: {
+                        Image(systemName: "plus")
                     }
                 }
-                .sheet(isPresented: $showingAdd) {
-                    AddReminderView(reminder: Reminder()) { store.upsert($0) }
-                }
-                .sheet(item: $editing) { reminder in
-                    AddReminderView(reminder: reminder) { store.upsert($0) }
-                }
-                .sheet(isPresented: $showingLogo) {
-                    AppLogoView()
-                        .environmentObject(store)
-                }
-                .onChange(of: scenePhase) { phase in
-                    guard phase == .active else { return }
-                    Task { await NotificationManager.shared.reschedule(store.reminders) }
-                }
+            }
+            .sheet(isPresented: $showingAdd) {
+                AddReminderView(reminder: Reminder()) { store.upsert($0) }
+            }
+            .sheet(item: $editing) { reminder in
+                AddReminderView(reminder: reminder) { store.upsert($0) }
+            }
+            .onChange(of: scenePhase) { phase in
+                guard phase == .active else { return }
+                logoImage = AppLogoStore.previewImage()
+                Task { await NotificationManager.shared.reschedule(store.reminders) }
+            }
+            .onAppear {
+                logoImage = AppLogoStore.previewImage()
+            }
         }
     }
 
-    @ViewBuilder private var content: some View {
-        if store.reminders.isEmpty {
-            VStack(spacing: 12) {
-                Image(systemName: "bell.slash")
-                    .font(.system(size: 46))
-                    .foregroundStyle(.secondary)
-                Text("No notifications yet")
-                    .font(.headline)
-                Text("Tap + to create one.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                Text("Tap the photo icon to set your notification logo.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            List {
-                ForEach(store.reminders) { reminder in
-                    Button {
-                        editing = reminder
-                    } label: {
-                        ReminderRow(reminder: reminder)
-                    }
-                    .buttonStyle(.plain)
-                }
-                .onDelete { offsets in
-                    let toDelete = offsets.map { store.reminders[$0] }
-                    toDelete.forEach { store.delete($0) }
-                }
-            }
+    private var logoSection: some View {
+        Section {
+            AppLogoPicker(logoImage: $logoImage)
+        } header: {
+            Text("App logo")
+        } footer: {
+            Text("Pick one image — it shows on every notification instead of the default bell.")
         }
     }
 }
 
-private struct AppLogoView: View {
-    @Environment(\.dismiss) private var dismiss
+private struct AppLogoPicker: View {
     @EnvironmentObject private var store: Store
+    @Binding var logoImage: UIImage?
 
     @State private var photoItem: PhotosPickerItem?
-    @State private var previewImage: UIImage?
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    PhotosPicker(selection: $photoItem, matching: .images) {
-                        Label(AppLogoStore.hasLogo ? "Change logo" : "Choose logo", systemImage: "photo")
+        VStack(spacing: 16) {
+            Group {
+                if let logoImage {
+                    Image(uiImage: logoImage)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    ZStack {
+                        Color(.secondarySystemFill)
+                        Image(systemName: "photo")
+                            .font(.system(size: 36))
+                            .foregroundStyle(.secondary)
                     }
-                    if let image = previewImage {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxHeight: 180)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                    }
-                    if AppLogoStore.hasLogo {
-                        Button("Remove logo", role: .destructive) {
-                            AppLogoStore.clear()
-                            previewImage = nil
-                            photoItem = nil
-                            store.refreshNotifications()
-                        }
-                    }
-                } header: {
-                    Text("Notification logo")
-                } footer: {
-                    Text("One logo for all notifications. It shows as the big round icon on the left of every alert.")
                 }
+            }
+            .frame(width: 96, height: 96)
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .strokeBorder(Color(.separator), lineWidth: 1)
+            )
 
-                Section {
-                    Button {
-                        Task {
-                            await NotificationManager.shared.requestAuth()
-                            await NotificationManager.shared.sendTest(Reminder(title: "Logo test", body: "Checking your logo"))
-                        }
-                    } label: {
-                        Label("Send a test notification", systemImage: "paperplane")
-                    }
+            PhotosPicker(selection: $photoItem, matching: .images) {
+                Label(logoImage == nil ? "Choose app logo" : "Change app logo", systemImage: "photo.on.rectangle")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+
+            if logoImage != nil {
+                Button("Remove logo", role: .destructive) {
+                    AppLogoStore.clear()
+                    logoImage = nil
+                    photoItem = nil
+                    store.refreshNotifications()
                 }
             }
-            .navigationTitle("App Logo")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
+
+            Button {
+                Task {
+                    await NotificationManager.shared.requestAuth()
+                    await NotificationManager.shared.sendTest(
+                        Reminder(title: "PingMe", body: "Preview of your notification logo")
+                    )
                 }
+            } label: {
+                Label("Test notification", systemImage: "paperplane")
             }
-            .onChange(of: photoItem) { _ in
-                Task { await loadPickedImage() }
-            }
-            .onAppear {
-                previewImage = AppLogoStore.previewImage()
-            }
+            .disabled(logoImage == nil)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .onChange(of: photoItem) { _ in
+            Task { await loadPickedImage() }
         }
     }
 
@@ -151,7 +155,7 @@ private struct AppLogoView: View {
               let image = UIImage(data: data) else { return }
         let jpeg = image.jpegData(compressionQuality: 0.9) ?? data
         AppLogoStore.save(jpeg)
-        previewImage = image
+        logoImage = image
         store.refreshNotifications()
     }
 }

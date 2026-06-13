@@ -345,8 +345,8 @@ final class NotificationManager {
         return await applyCommunicationAvatar(
             to: content,
             imageURL: imageURL,
-            displayName: title,
-            conversationID: reminder.id.uuidString
+            displayName: "PingMe",
+            conversationID: "pingme-logo"
         )
     }
 
