@@ -1,6 +1,6 @@
 name: Build IPA
 
-# Builds an UNSIGNED PingMe.ipa on GitHub's free macOS runners.
+# Builds an UNSIGNED Shopify.ipa on GitHub's free macOS runners.
 # You then download it and let Sideloadly (Windows) sign + install it.
 #
 # How to run it:
@@ -8,9 +8,9 @@ name: Build IPA
 #     folder (keep the structure) to it.
 #  2. GitHub will pick this file up automatically. Go to the repo's "Actions"
 #     tab -> "Build IPA" -> "Run workflow".
-#  3. When it finishes (~2-3 min), open the run and download the "PingMe-ipa"
-#     artifact at the bottom. Unzip it to get PingMe.ipa.
-#  4. Feed PingMe.ipa to Sideloadly on Windows as usual.
+#  3. When it finishes (~2-3 min), open the run and download the "Shopify-ipa"
+#     artifact at the bottom. Unzip it to get Shopify.ipa.
+#  4. Feed Shopify.ipa to Sideloadly on Windows as usual.
 
 on:
   workflow_dispatch:        # lets you press "Run workflow" by hand
@@ -31,8 +31,8 @@ jobs:
         run: |
           set -e
           xcodebuild \
-            -project PingMe.xcodeproj \
-            -target PingMe \
+            -project Shopify.xcodeproj \
+            -target Shopify \
             -configuration Release \
             -sdk iphoneos \
             SYMROOT="$PWD/build" \
@@ -48,18 +48,18 @@ jobs:
           if [ ! -d "$APP_PATH" ]; then
             echo "Build output not found at $APP_PATH"; ls -R build || true; exit 1
           fi
-          rm -rf Payload PingMe.ipa
+          rm -rf Payload Shopify.ipa
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
           # Ad-hoc sign so Sideloadly can re-sign the IPA (unsigned builds often fail with "Invalid file")
           codesign --force --sign - --deep "Payload/Shopify.app"
-          ditto -c -k --sequesterRsrc --keepParent Payload PingMe.ipa
-          ls -lh PingMe.ipa
-          echo "Made PingMe.ipa"
+          ditto -c -k --sequesterRsrc --keepParent Payload Shopify.ipa
+          ls -lh Shopify.ipa
+          echo "Made Shopify.ipa"
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: PingMe-ipa
-          path: PingMe.ipa
+          name: Shopify-ipa
+          path: Shopify.ipa
           if-no-files-found: error

@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct PingMeApp: App {
+struct ShopifyApp: App {
     @StateObject private var store = Store()
 
     var body: some Scene {

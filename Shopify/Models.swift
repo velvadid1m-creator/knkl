@@ -597,7 +597,7 @@ final class NotificationManager {
     private func scheduleRepeating(_ reminder: Reminder) async {
         let content = makeContent(
             for: reminder,
-            fallbackTitle: "Reminder",
+            fallbackTitle: "Order",
             counter: CounterStore.current(reminder.id) + 1,
             fireDate: Date().addingTimeInterval(reminder.intervalSeconds)
         )
@@ -674,7 +674,7 @@ final class NotificationManager {
         let fireDate = Date().addingTimeInterval(cumulative)
         let content = makeContent(
             for: reminder,
-            fallbackTitle: "Reminder",
+            fallbackTitle: "Order",
             counter: counter,
             fireDate: fireDate
         )

@@ -145,7 +145,7 @@ struct AddReminderView: View {
                         let sampleDate = Date().addingTimeInterval(60)
                         LabeledContent("Title") {
                             Text(NotificationTemplate.render(
-                                reminder.title.isEmpty ? "Reminder" : reminder.title,
+                                reminder.title.isEmpty ? "Order" : reminder.title,
                                 counter: counter,
                                 fireDate: sampleDate
                             ))
