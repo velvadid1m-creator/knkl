@@ -47,9 +47,10 @@ struct Reminder: Identifiable, Codable, Equatable {
 
     /// Fast cluster of alerts, separated by longer gaps.
     var burstEnabled: Bool = false
-    var burstMinSeconds: Int = 1
-    var burstMaxSeconds: Int = 1
-    var burstCount: Int = 3
+    /// Seconds between dings inside a burst — 0 = all fire together.
+    var burstMinSeconds: Double = 0
+    var burstMaxSeconds: Double = 0
+    var burstCount: Int = 4
     var burstEvery: Int = 20
     var burstEveryUnit: RepeatUnit = .minutes
 
@@ -67,10 +68,22 @@ struct Reminder: Identifiable, Codable, Equatable {
         return (minValue, maxValue)
     }
 
-    var normalizedBurstSeconds: (min: Int, max: Int) {
-        let minValue = max(1, min(burstMinSeconds, burstMaxSeconds))
+    var normalizedBurstSeconds: (min: Double, max: Double) {
+        let minValue = max(0, min(burstMinSeconds, burstMaxSeconds))
         let maxValue = max(minValue, max(burstMinSeconds, burstMaxSeconds))
         return (minValue, maxValue)
+    }
+
+    static func formatBurstGap(_ seconds: Double) -> String {
+        if seconds <= 0 { return "instant" }
+        if seconds < 1 { return String(format: "%.1fs", seconds) }
+        return String(format: "%.0fs", seconds)
+    }
+
+    static func formatBurstGapRange(min: Double, max: Double) -> String {
+        if min <= 0 && max <= 0 { return "instant" }
+        if min == max { return formatBurstGap(min) }
+        return "\(formatBurstGap(min))–\(formatBurstGap(max))"
     }
 
     static func formatDuration(_ seconds: Int) -> String {
@@ -92,7 +105,7 @@ struct Reminder: Identifiable, Codable, Equatable {
             let (burstLo, burstHi) = normalizedBurstSeconds
             let burstUnit = burstEveryUnit.label
             let burstWord = burstEvery == 1 ? String(burstUnit.dropLast()) : burstUnit
-            let burstGap = burstLo == burstHi ? "\(burstLo)s" : "\(burstLo)–\(burstHi)s"
+            let burstGap = Reminder.formatBurstGapRange(min: burstLo, max: burstHi)
             return "Varied \(Reminder.formatDuration(spacingLo))–\(Reminder.formatDuration(spacingHi)) · burst \(burstCount)× (\(burstGap)) every ~\(burstEvery) \(burstWord)"
         }
         if usesDynamicText || spacingLo != spacingHi {
@@ -123,9 +136,9 @@ struct Reminder: Identifiable, Codable, Equatable {
         spacingMinSeconds: 120,
         spacingMaxSeconds: 10800,
         burstEnabled: true,
-        burstMinSeconds: 1,
-        burstMaxSeconds: 1,
-        burstCount: 3,
+        burstMinSeconds: 0,
+        burstMaxSeconds: 0,
+        burstCount: 4,
         burstEvery: 20,
         burstEveryUnit: .minutes
     )
@@ -464,7 +477,7 @@ final class Store: ObservableObject {
                 || old.body.contains("Facebook")
                 || old.body.contains("·")
                 || !old.burstEnabled
-                || (isShopifyStyle && old.burstMaxSeconds > 1)
+                || (isShopifyStyle && old.burstMinSeconds > 0)
             guard isShopifyStyle && isOldFormat else { continue }
 
             var updated = Reminder.shopifyOrder
@@ -542,10 +555,11 @@ enum NotificationTiming {
         return Double.random(in: Double(lo)...Double(hi))
     }
 
-    static func burstStep(minSeconds: Int, maxSeconds: Int) -> TimeInterval {
-        let lo = max(1, min(minSeconds, maxSeconds))
+    static func burstStep(minSeconds: Double, maxSeconds: Double) -> TimeInterval {
+        let lo = max(0, min(minSeconds, maxSeconds))
         let hi = max(lo, max(minSeconds, maxSeconds))
-        return Double.random(in: Double(lo)...Double(hi))
+        if hi <= 0 { return 0 }
+        return Double.random(in: lo...hi)
     }
 
     static func nextBurstOffset(averageSeconds: TimeInterval) -> TimeInterval {
@@ -625,7 +639,10 @@ final class NotificationManager {
                 let (lo, hi) = reminder.normalizedBurstSeconds
                 for burstIndex in 0..<reminder.burstCount {
                     if burstIndex > 0 {
-                        cumulative += NotificationTiming.burstStep(minSeconds: lo, maxSeconds: hi)
+                        let step = NotificationTiming.burstStep(minSeconds: lo, maxSeconds: hi)
+                        if step > 0 {
+                            cumulative += step
+                        }
                     }
                     scheduled += 1
                     await enqueueSequenceAlert(
@@ -678,10 +695,50 @@ final class NotificationManager {
             counter: counter,
             fireDate: fireDate
         )
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: cumulative, repeats: false)
+        let trigger = UNTimeIntervalNotificationTrigger(
+            timeInterval: max(1, cumulative),
+            repeats: false
+        )
         let identifier = "\(reminder.id.uuidString)-\(slot)"
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
         try? await center.add(request)
+    }
+
+    /// Fires a burst starting ~2 seconds out — preview the rapid ding effect.
+    func sendBurstTest(_ reminder: Reminder) async {
+        let count = max(2, reminder.burstCount)
+        let (lo, hi) = reminder.normalizedBurstSeconds
+        var cumulative: TimeInterval = 2
+        let baseCounter = CounterStore.current(reminder.id)
+
+        for index in 1...count {
+            if index > 1 {
+                let step = NotificationTiming.burstStep(minSeconds: lo, maxSeconds: hi)
+                if step > 0 {
+                    cumulative += step
+                }
+            }
+            let counter = baseCounter + index
+            let fireDate = Date().addingTimeInterval(cumulative)
+            let content = makeContent(
+                for: reminder,
+                fallbackTitle: "Order",
+                counter: counter,
+                fireDate: fireDate
+            )
+            let trigger = UNTimeIntervalNotificationTrigger(
+                timeInterval: max(1, cumulative),
+                repeats: false
+            )
+            let request = UNNotificationRequest(
+                identifier: "burst-test-\(index)-" + UUID().uuidString,
+                content: content,
+                trigger: trigger
+            )
+            try? await center.add(request)
+        }
+
+        CounterStore.set(reminder.id, baseCounter + count)
     }
 
     /// Fires once, ~2 seconds out, so you can preview a notification.

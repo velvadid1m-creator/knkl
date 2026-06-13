@@ -23,16 +23,58 @@ struct AddReminderView: View {
 
     private var burstGapDescription: String {
         let (lo, hi) = reminder.normalizedBurstSeconds
-        if lo == hi { return "\(lo)s apart" }
-        return "\(lo)–\(hi)s apart"
+        let range = Reminder.formatBurstGapRange(min: lo, max: hi)
+        return range == "instant" ? "all dings together" : "\(range) apart"
     }
 
     private var burstPreviewText: String {
         let (lo, hi) = reminder.normalizedBurstSeconds
-        let span = lo == hi
-            ? max(0, (reminder.burstCount - 1) * lo)
-            : (reminder.burstCount - 1) * hi
-        return "\(reminder.burstCount)× in ~\(span)s · every \(reminder.burstEvery) \(reminder.burstEveryUnit.label)"
+        let span: String
+        if lo <= 0 && hi <= 0 {
+            span = "instant"
+        } else if lo == hi {
+            span = String(format: "~%.1fs", max(0, Double(reminder.burstCount - 1) * lo))
+        } else {
+            span = String(format: "~%.1fs", max(0, Double(reminder.burstCount - 1) * hi))
+        }
+        return "\(reminder.burstCount)× \(span) · every \(reminder.burstEvery) \(reminder.burstEveryUnit.label)"
+    }
+
+    @ViewBuilder
+    private func burstGapField(
+        label: String,
+        value: Binding<Double>,
+        range: ClosedRange<Double>,
+        onChange: (() -> Void)? = nil
+    ) -> some View {
+        HStack {
+            Text(label)
+            Spacer()
+            Button {
+                value.wrappedValue = max(range.lowerBound, (value.wrappedValue - 0.1).rounded(toPlaces: 1))
+                onChange?()
+            } label: {
+                Image(systemName: "minus.circle.fill")
+            }
+            .buttonStyle(.plain)
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(Reminder.formatBurstGap(value.wrappedValue))
+                    .monospacedDigit()
+                Text("seconds")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(width: 72)
+
+            Button {
+                value.wrappedValue = min(range.upperBound, (value.wrappedValue + 0.1).rounded(toPlaces: 1))
+                onChange?()
+            } label: {
+                Image(systemName: "plus.circle.fill")
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     @ViewBuilder
@@ -214,24 +256,50 @@ struct AddReminderView: View {
                     Toggle("Burst mode", isOn: $reminder.burstEnabled)
 
                     if reminder.burstEnabled {
-                        spacingField(
-                            label: "Burst gap from",
+                        HStack {
+                            Button("Instant") {
+                                reminder.burstMinSeconds = 0
+                                reminder.burstMaxSeconds = 0
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("0.1s") {
+                                reminder.burstMinSeconds = 0.1
+                                reminder.burstMaxSeconds = 0.1
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("0.5s") {
+                                reminder.burstMinSeconds = 0.5
+                                reminder.burstMaxSeconds = 0.5
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button("1s") {
+                                reminder.burstMinSeconds = 1
+                                reminder.burstMaxSeconds = 1
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
+                        burstGapField(
+                            label: "Gap from",
                             value: $reminder.burstMinSeconds,
-                            range: 1...reminder.burstMaxSeconds
+                            range: 0...reminder.burstMaxSeconds
                         ) {
                             if reminder.burstMaxSeconds < reminder.burstMinSeconds {
                                 reminder.burstMaxSeconds = reminder.burstMinSeconds
                             }
                         }
 
-                        spacingField(
-                            label: "Burst gap to",
+                        burstGapField(
+                            label: "Gap to",
                             value: $reminder.burstMaxSeconds,
-                            range: reminder.burstMinSeconds...60
+                            range: reminder.burstMinSeconds...5
                         )
 
-                        Stepper(value: $reminder.burstCount, in: 2...12) {
-                            Text("\(reminder.burstCount) alerts per burst")
+                        Stepper(value: $reminder.burstCount, in: 2...8) {
+                            Text("\(reminder.burstCount) dings per burst")
                         }
 
                         Stepper(value: $reminder.burstEvery, in: burstEveryRange) {
@@ -253,12 +321,21 @@ struct AddReminderView: View {
                                 .foregroundStyle(.secondary)
                                 .multilineTextAlignment(.trailing)
                         }
+
+                        Button {
+                            Task {
+                                await NotificationManager.shared.requestAuth()
+                                await NotificationManager.shared.sendBurstTest(reminder)
+                            }
+                        } label: {
+                            Label("Test burst now", systemImage: "bell.badge")
+                        }
                     }
                 } header: {
                     Text("Burst")
                 } footer: {
                     if reminder.burstEnabled {
-                        Text("A burst fires \(reminder.burstCount) alerts \(burstGapDescription). iOS needs at least 1 second between alerts, so 3× with 1s gap lands in about 2 seconds. Reopen the app to refill the next 64.")
+                        Text("0s = rapid ding-ding-ding burst like videos — all sounds fire together. Use 0.1–1s for a slightly spaced burst. Reopen the app to refill the next 64.")
                     } else {
                         Text("Turn on for occasional rapid clusters between normal varied alerts.")
                     }
@@ -337,5 +414,12 @@ struct AddReminderView: View {
                 soundImportError = error.localizedDescription
             }
         }
+    }
+}
+
+private extension Double {
+    func rounded(toPlaces places: Int) -> Double {
+        let factor = pow(10, Double(places))
+        return (self * factor).rounded() / factor
     }
 }
