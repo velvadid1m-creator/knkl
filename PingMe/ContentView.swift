@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var store: Store
     @State private var showingAdd = false
     @State private var editing: Reminder?
@@ -23,6 +24,10 @@ struct ContentView: View {
                 }
                 .sheet(item: $editing) { reminder in
                     AddReminderView(reminder: reminder) { store.upsert($0) }
+                }
+                .onChange(of: scenePhase) { phase in
+                    guard phase == .active else { return }
+                    Task { await NotificationManager.shared.reschedule(store.reminders) }
                 }
         }
     }

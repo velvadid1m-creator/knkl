@@ -4,6 +4,7 @@ import UserNotifications
 // MARK: - Repeat unit
 
 enum RepeatUnit: String, Codable, CaseIterable, Identifiable {
+    case seconds
     case minutes
     case hours
     case days
@@ -12,6 +13,7 @@ enum RepeatUnit: String, Codable, CaseIterable, Identifiable {
 
     var seconds: TimeInterval {
         switch self {
+        case .seconds: return 1
         case .minutes: return 60
         case .hours:   return 3600
         case .days:    return 86400
@@ -20,6 +22,7 @@ enum RepeatUnit: String, Codable, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
+        case .seconds: return "seconds"
         case .minutes: return "minutes"
         case .hours:   return "hours"
         case .days:    return "days"
@@ -39,14 +42,14 @@ struct Reminder: Identifiable, Codable, Equatable {
     var unit: RepeatUnit = .hours
     var isOn: Bool = true
 
-    /// iOS requires repeating intervals to be at least 60 seconds.
     var intervalSeconds: TimeInterval {
-        max(60, Double(max(1, every)) * unit.seconds)
+        Double(max(1, every)) * unit.seconds
     }
 
     var cadenceText: String {
         let word: String
         switch unit {
+        case .seconds: word = every == 1 ? "second" : "seconds"
         case .minutes: word = every == 1 ? "minute" : "minutes"
         case .hours:   word = every == 1 ? "hour" : "hours"
         case .days:    word = every == 1 ? "day" : "days"
@@ -63,13 +66,84 @@ struct SoundOption: Identifiable, Hashable {
     let label: String
 }
 
-let availableSounds: [SoundOption] = [
+let bundledSounds: [SoundOption] = [
     SoundOption(fileName: "",          label: "Default"),
     SoundOption(fileName: "chime.wav", label: "Chime"),
     SoundOption(fileName: "ding.wav",  label: "Ding"),
     SoundOption(fileName: "bell.wav",  label: "Bell"),
     SoundOption(fileName: "alarm.wav", label: "Alarm")
 ]
+
+enum SoundStore {
+    private static let listKey = "customSounds.v1"
+    private static let allowedExtensions = ["wav", "aiff", "aif", "caf", "m4a", "mp3"]
+
+    static var soundsDirectory: URL {
+        let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+        let folder = library.appendingPathComponent("Sounds", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        return folder
+    }
+
+    static var customFileNames: [String] {
+        get { UserDefaults.standard.stringArray(forKey: listKey) ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: listKey) }
+    }
+
+    static func allOptions() -> [SoundOption] {
+        let custom = customFileNames.map { name in
+            SoundOption(fileName: name, label: name)
+        }
+        return bundledSounds + custom
+    }
+
+    @discardableResult
+    static func importSound(from source: URL) throws -> String {
+        let ext = source.pathExtension.lowercased()
+        guard allowedExtensions.contains(ext) else {
+            throw SoundImportError.unsupportedType
+        }
+
+        let base = source.deletingPathExtension().lastPathComponent
+        let safeBase = base.isEmpty ? "custom" : String(base.prefix(40))
+        var fileName = "\(safeBase).\(ext)"
+        var destination = soundsDirectory.appendingPathComponent(fileName)
+        var counter = 1
+        while FileManager.default.fileExists(atPath: destination.path) {
+            fileName = "\(safeBase)-\(counter).\(ext)"
+            destination = soundsDirectory.appendingPathComponent(fileName)
+            counter += 1
+        }
+
+        if source.startAccessingSecurityScopedResource() {
+            defer { source.stopAccessingSecurityScopedResource() }
+            try FileManager.default.copyItem(at: source, to: destination)
+        } else {
+            try FileManager.default.copyItem(at: source, to: destination)
+        }
+
+        if !customFileNames.contains(fileName) {
+            customFileNames.append(fileName)
+        }
+        return fileName
+    }
+
+    static func delete(_ fileName: String) {
+        try? FileManager.default.removeItem(at: soundsDirectory.appendingPathComponent(fileName))
+        customFileNames.removeAll { $0 == fileName }
+    }
+}
+
+enum SoundImportError: LocalizedError {
+    case unsupportedType
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedType:
+            return "Use a .wav, .aiff, .caf, .m4a, or .mp3 file under 30 seconds."
+        }
+    }
+}
 
 // MARK: - Image storage (Documents/images)
 
@@ -168,12 +242,46 @@ final class NotificationManager {
         (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
     }
 
+    private let maxPending = 64
+
     func reschedule(_ reminders: [Reminder]) async {
         center.removeAllPendingNotificationRequests()
-        for reminder in reminders where reminder.isOn {
-            let content = makeContent(for: reminder, fallbackTitle: "Reminder")
-            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: reminder.intervalSeconds, repeats: true)
-            let request = UNNotificationRequest(identifier: reminder.id.uuidString, content: content, trigger: trigger)
+
+        let active = reminders.filter(\.isOn)
+        guard !active.isEmpty else { return }
+
+        let slow = active.filter { $0.intervalSeconds >= 60 }
+        let fast = active.filter { $0.intervalSeconds < 60 }
+        let burstSlots = max(0, maxPending - slow.count)
+
+        for reminder in slow {
+            await scheduleRepeating(reminder)
+        }
+
+        guard burstSlots > 0, !fast.isEmpty else { return }
+
+        let perReminder = max(1, burstSlots / fast.count)
+        for reminder in fast {
+            await scheduleBurst(reminder, count: perReminder)
+        }
+    }
+
+    private func scheduleRepeating(_ reminder: Reminder) async {
+        let content = makeContent(for: reminder, fallbackTitle: "Reminder")
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: reminder.intervalSeconds, repeats: true)
+        let request = UNNotificationRequest(identifier: reminder.id.uuidString, content: content, trigger: trigger)
+        try? await center.add(request)
+    }
+
+    /// iOS won't repeat faster than 60s, so queue many one-shot alerts instead.
+    private func scheduleBurst(_ reminder: Reminder, count: Int) async {
+        let interval = max(1, reminder.intervalSeconds)
+        let content = makeContent(for: reminder, fallbackTitle: "Reminder")
+
+        for index in 1...count {
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval * Double(index), repeats: false)
+            let identifier = "\(reminder.id.uuidString)-\(index)"
+            let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
             try? await center.add(request)
         }
     }

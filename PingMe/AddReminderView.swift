@@ -1,6 +1,7 @@
 import SwiftUI
 import PhotosUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct AddReminderView: View {
     @Environment(\.dismiss) private var dismiss
@@ -10,10 +11,22 @@ struct AddReminderView: View {
 
     @State private var photoItem: PhotosPickerItem?
     @State private var previewImage: UIImage?
+    @State private var soundOptions = SoundStore.allOptions()
+    @State private var showingSoundImporter = false
+    @State private var soundImportError: String?
 
     init(reminder: Reminder, onSave: @escaping (Reminder) -> Void) {
         _reminder = State(initialValue: reminder)
         self.onSave = onSave
+    }
+
+    private var everyRange: ClosedRange<Int> {
+        switch reminder.unit {
+        case .seconds: return 1...300
+        case .minutes: return 1...999
+        case .hours:   return 1...999
+        case .days:    return 1...999
+        }
     }
 
     var body: some View {
@@ -25,12 +38,29 @@ struct AddReminderView: View {
                         .lineLimit(1...4)
                 }
 
-                Section("Sound") {
+                Section {
                     Picker("Sound", selection: $reminder.soundName) {
-                        ForEach(availableSounds) { sound in
+                        ForEach(soundOptions) { sound in
                             Text(sound.label).tag(sound.fileName)
                         }
                     }
+                    Button {
+                        showingSoundImporter = true
+                    } label: {
+                        Label("Import custom sound", systemImage: "square.and.arrow.down")
+                    }
+                    if reminder.soundName.isEmpty == false,
+                       SoundStore.customFileNames.contains(reminder.soundName) {
+                        Button("Delete custom sound", role: .destructive) {
+                            SoundStore.delete(reminder.soundName)
+                            reminder.soundName = ""
+                            refreshSoundOptions()
+                        }
+                    }
+                } header: {
+                    Text("Sound")
+                } footer: {
+                    Text("Import .wav, .aiff, .caf, .m4a, or .mp3 files under 30 seconds. Custom sounds are copied into the app so they still play when PingMe is closed.")
                 }
 
                 Section {
@@ -60,7 +90,7 @@ struct AddReminderView: View {
                 }
 
                 Section {
-                    Stepper(value: $reminder.every, in: 1...999) {
+                    Stepper(value: $reminder.every, in: everyRange) {
                         Text("Every \(reminder.every)")
                     }
                     Picker("Unit", selection: $reminder.unit) {
@@ -68,10 +98,13 @@ struct AddReminderView: View {
                             Text(unit.label).tag(unit)
                         }
                     }
+                    .onChange(of: reminder.unit) { _ in
+                        reminder.every = min(reminder.every, everyRange.upperBound)
+                    }
                 } header: {
                     Text("How often")
                 } footer: {
-                    Text("iPhone repeats no faster than once a minute, and keeps your 64 most imminent notifications scheduled at a time.")
+                    Text("Intervals under 1 minute queue as many alerts as iOS allows (up to 64). Re-open PingMe to refill the queue after they run out.")
                 }
 
                 Section {
@@ -104,6 +137,42 @@ struct AddReminderView: View {
             }
             .task {
                 await loadExistingPreview()
+                refreshSoundOptions()
+            }
+            .fileImporter(
+                isPresented: $showingSoundImporter,
+                allowedContentTypes: [.wav, .aiff, .audio, .mp3],
+                allowsMultipleSelection: false
+            ) { result in
+                handleSoundImport(result)
+            }
+            .alert("Couldn't import sound", isPresented: Binding(
+                get: { soundImportError != nil },
+                set: { if !$0 { soundImportError = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(soundImportError ?? "")
+            }
+        }
+    }
+
+    private func refreshSoundOptions() {
+        soundOptions = SoundStore.allOptions()
+    }
+
+    private func handleSoundImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .failure(let error):
+            soundImportError = error.localizedDescription
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            do {
+                let fileName = try SoundStore.importSound(from: url)
+                refreshSoundOptions()
+                reminder.soundName = fileName
+            } catch {
+                soundImportError = error.localizedDescription
             }
         }
     }
