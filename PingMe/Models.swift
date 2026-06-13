@@ -46,6 +46,16 @@ struct Reminder: Identifiable, Codable, Equatable {
     }
 
     var cadenceText: String {
+        if usesDynamicText {
+            let word: String
+            switch unit {
+            case .seconds: word = every == 1 ? "second" : "seconds"
+            case .minutes: word = every == 1 ? "minute" : "minutes"
+            case .hours:   word = every == 1 ? "hour" : "hours"
+            case .days:    word = every == 1 ? "day" : "days"
+            }
+            return "Varied · ~\(every) \(word)"
+        }
         let word: String
         switch unit {
         case .seconds: word = every == 1 ? "second" : "seconds"
@@ -440,6 +450,23 @@ final class Store: ObservableObject {
     }
 }
 
+// MARK: - Notification timing
+
+enum NotificationTiming {
+    /// Realistic gaps — mostly minutes apart, sometimes up to a few hours.
+    static func randomDelay(averageSeconds: TimeInterval) -> TimeInterval {
+        let base = max(60, averageSeconds)
+        switch Int.random(in: 1...100) {
+        case 1...45:
+            return Double.random(in: max(90, base * 0.35)...max(150, base * 1.4))
+        case 46...80:
+            return Double.random(in: max(300, base * 0.7)...max(900, base * 5))
+        default:
+            return Double.random(in: max(3600, base * 4)...max(10800, base * 36))
+        }
+    }
+}
+
 // MARK: - Notifications
 
 final class NotificationManager {
@@ -497,17 +524,22 @@ final class NotificationManager {
     private func scheduleSequence(_ reminder: Reminder, count: Int) async {
         let interval = max(1, reminder.intervalSeconds)
         let baseCounter = CounterStore.current(reminder.id)
+        var cumulative: TimeInterval = 0
 
         for index in 1...count {
             let counter = baseCounter + index
-            let fireDate = Date().addingTimeInterval(interval * Double(index))
+            let step = reminder.usesDynamicText
+                ? NotificationTiming.randomDelay(averageSeconds: interval)
+                : interval
+            cumulative += step
+            let fireDate = Date().addingTimeInterval(cumulative)
             let content = makeContent(
                 for: reminder,
                 fallbackTitle: "Reminder",
                 counter: counter,
                 fireDate: fireDate
             )
-            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval * Double(index), repeats: false)
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: cumulative, repeats: false)
             let identifier = "\(reminder.id.uuidString)-\(index)"
             let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
             try? await center.add(request)

@@ -131,7 +131,7 @@ struct AddReminderView: View {
                 } header: {
                     Text("How often")
                 } footer: {
-                    Text("Shopify-style variables change each alert. iOS keeps up to 64 upcoming — reopen PingMe to refill.")
+                    Text("Shopify-style variables change each alert. Timing varies — mostly every few minutes, sometimes up to a few hours. Reopen the app to refill the next 64.")
                 }
 
                 Section {
