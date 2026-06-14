@@ -368,14 +368,16 @@ enum DashboardData {
         let all = recentOrders(counter: counter, limit: 12)
         var orders = all.filter { Calendar.current.isDateInToday($0.placedAt) }
         if orders.isEmpty {
-            orders = Array(all.prefix(6))
+            orders = Array(all.prefix(8))
         }
-        let sales = orders.reduce(0) { $0 + $1.totalPence }
-        let sessions = max(orders.count * 18 + 42, 64)
-        let conversion = orders.isEmpty ? 2.4 : min(6.8, Double(orders.count) / Double(sessions) * 100 + 1.8)
+        let orderSales = orders.reduce(0) { $0 + $1.totalPence }
+        let sales = max(orderSales, 284_732 + (counter % 9) * 4_250)
+        let orderCount = max(orders.count, 7)
+        let sessions = max(orderCount * 22 + 118, 186)
+        let conversion = min(5.9, Double(orderCount) / Double(sessions) * 100 + 2.1)
         return DashboardStats(
             totalSalesPence: sales,
-            orderCount: orders.count,
+            orderCount: orderCount,
             sessions: sessions,
             conversionRate: conversion
         )
