@@ -4,12 +4,13 @@ enum AppIconManager {
     private static let legacyKeys = [
         "selectedAppIcon.v1",
         "reminders.v1",
+        "shopify.merchant.reminders.v1",
         "seeded.shopify.v3",
         "seeded.shopify.v2",
         "seeded.shopify.v1",
+        "shopify.merchant.seeded.v1",
     ]
 
-    /// Force the primary Shopify icon and purge legacy PingMe defaults.
     @MainActor
     static func ensureShopifyIcon() async {
         for key in legacyKeys {

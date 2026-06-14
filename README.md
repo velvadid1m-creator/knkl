@@ -1,23 +1,26 @@
 # Shopify — merchant app (iOS)
 
-Sideload on Windows via GitHub Actions + Sideloadly. No Mac required.
+Fresh Shopify app — **not** PingMe. Same notification/dashboard code, new app identity.
 
-## Quick install (Windows)
+## Install (Windows + Sideloadly)
 
-1. Push this repo to GitHub (or use the existing repo).
-2. Go to **Actions** → **Build IPA** → wait ~2–3 min.
-3. Download the **Shopify-ipa** artifact → unzip to get **`Shopify.ipa`**.
-4. Delete any old apps from your phone (including previous installs).
-5. Install **`Shopify.ipa`** with **Sideloadly** (USB + Apple ID).
+1. **Actions** → **Build IPA** → wait ~2–3 min.
+2. Download **Shopify-ipa** artifact → `Shopify.ipa`
+3. **Delete every old app** on your iPhone (PingMe, old Shopify sideloads, everything).
+4. Sideload **`Shopify.ipa`** with Sideloadly.
 
-**Bundle ID:** `com.shopify.novuskits.merchant` — this is a fresh Shopify app identity.
+| Field | Value |
+|-------|--------|
+| App name | **Shopify** |
+| Bundle ID | `com.shopify.merchant` |
+| Icon | Official black Shopify bag |
 
-## Build locally (Mac)
+Save IPA to: `C:\Users\made9\Downloads\ShopifyMerchant\Shopify.ipa`
 
-1. Open **`Shopify.xcodeproj`** in Xcode.
-2. Select the **Shopify** target → set your Team.
-3. Archive or build for device, then package as `Shopify.ipa` for Sideloadly.
+## Hidden notification controls
+
+**Home → triple-tap the Total sales £ amount**
 
 ## Custom sounds
 
-Import `.wav`, `.aiff`, `.caf`, `.m4a`, or `.mp3` (under 30 seconds) from inside the app.
+Import `.wav`, `.aiff`, `.caf`, `.m4a`, or `.mp3` from the hidden settings screen.

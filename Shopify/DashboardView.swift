@@ -119,14 +119,10 @@ private struct ShopifyBagMark: View {
     var size: CGFloat = 28
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
-                .fill(ShopifyTheme.brandDark)
-                .frame(width: size, height: size)
-            ShopifyBagShape()
-                .fill(.white)
-                .frame(width: size * 0.52, height: size * 0.52)
-        }
+        Image("ShopifyLogo")
+            .resizable()
+            .scaledToFit()
+            .frame(width: size, height: size)
     }
 }
 
